@@ -6,7 +6,11 @@ const TlsImpl = enum {
 };
 
 pub fn build(b: *std.Build) void {
-    const tls = b.option(TlsImpl, "tls", "Choose between bearssl and s2n_tls implementation") orelse .bearssl;
+    const tls = b.option(
+        TlsImpl,
+        "tls",
+        "Choose between bearssl and s2n_tls implementation",
+    ) orelse .bearssl;
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const tardy = @import("tardy");
-const Socket = tardy.Socket;
+const Socket = tardy.net.Socket;
 const Runtime = tardy.Runtime;
 
 const SecureSocket = @import("lib.zig").SecureSocket;

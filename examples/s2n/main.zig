@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const Runtime = @import("tardy").Runtime;
 const secsock = @import("secsock");
-const Socket = @import("tardy").Socket;
-const Timer = @import("tardy").Timer;
+const tardy = @import("tardy");
+const Runtime = tardy.Runtime;
+const Socket = tardy.net.Socket;
 
 const log = std.log.scoped(.@"examples/s2n");
 
@@ -11,8 +11,8 @@ const Tardy = @import("tardy").Tardy(.auto);
 
 // curl -vk https://127.0.0.1:9862
 pub fn main(init: std.process.Init) !void {
-    var tardy: Tardy = try .init(init.gpa, init.io, .{ .threading = .single });
-    defer tardy.deinit();
+    var td: Tardy = try .init(init.gpa, init.io, .{ .threading = .single });
+    defer td.deinit();
 
     // ideally, this is the pattern we can utilize where the
     // tls vendor is initialized outside of tardy and shared internally.
@@ -20,15 +20,17 @@ pub fn main(init: std.process.Init) !void {
     defer s2n.deinit();
     try s2n.add_cert_chain(@embedFile("cert.pem"), @embedFile("key.pem"));
 
-    try tardy.entry(&s2n, struct {
+    try td.entry(&s2n, struct {
         fn entry(rt: *Runtime, s: *secsock.s2n) !void {
-            try rt.spawn(.{ rt, s }, echo_frame, 1024 * 1024 * 16);
+            try rt.spawn(echo_frame, .{ rt, s }, .KiB(48));
         }
     }.entry);
 }
 
 fn echo_frame(rt: *Runtime, s2n: *secsock.s2n) !void {
-    const socket: Socket = try .init(rt.io, .{ .tcp = .{ .host = "127.0.0.1", .port = 9862 } });
+    const socket: Socket = try .init(rt.io, .{
+        .tcp = .{ .host = "127.0.0.1", .port = 9862 },
+    });
     defer socket.close_blocking();
     try socket.bind();
     try socket.listen(128);
@@ -42,7 +44,8 @@ fn echo_frame(rt: *Runtime, s2n: *secsock.s2n) !void {
 
     while (true) {
         var buf: [1024]u8 = undefined;
-        const count = connected.recv(rt, &buf) catch |e| if (e == error.Closed) break else return e;
+        const count = connected.recv(rt, &buf) catch |e|
+            if (e == error.Closed) break else return e;
         log.info("recv count: {d}", .{count});
         _ = connected.send(rt, buf[0..count]) catch |e| if (e == error.Closed) break else return e;
     }

@@ -4,7 +4,7 @@ const std = @import("std");
 const options = @import("options");
 const tardy = @import("tardy");
 const Runtime = tardy.Runtime;
-const Socket = tardy.Socket;
+const Socket = tardy.net.Socket;
 
 pub const BearSSL = if (options.tls == .bearssl) @import("bearssl/lib.zig").BearSSL;
 

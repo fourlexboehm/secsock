@@ -1,19 +1,19 @@
 const std = @import("std");
 
-const Runtime = @import("tardy").Runtime;
 const secsock = @import("secsock");
 const SecureSocket = secsock.SecureSocket;
-const Socket = @import("tardy").Socket;
-const Timer = @import("tardy").Timer;
+const tardy = @import("tardy");
+const Socket = tardy.net.Socket;
+const Runtime = tardy.Runtime;
 
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = tardy.Tardy(.auto);
 
 const log = std.log.scoped(.@"examples/bearssl");
 
 // curl -vk https://127.0.0.1:9862
 pub fn main(init: std.process.Init) !void {
-    var tardy: Tardy = try .init(init.gpa, init.io, .{ .threading = .single });
-    defer tardy.deinit();
+    var td: Tardy = try .init(init.gpa, init.io, .{ .threading = .single });
+    defer td.deinit();
 
     var bearssl: secsock.BearSSL = .init(init.gpa);
     defer bearssl.deinit();
@@ -32,7 +32,9 @@ pub fn main(init: std.process.Init) !void {
         @embedFile("certs/rsa_key.pem"),
     );
 
-    const socket: Socket = try .init(init.io, .{ .tcp = .{ .host = "127.0.0.1", .port = 9862 } });
+    const socket: Socket = try .init(init.io, .{
+        .tcp = .{ .host = "127.0.0.1", .port = 9862 },
+    });
     defer socket.close_blocking();
     try socket.bind();
     try socket.listen(128);
@@ -40,9 +42,9 @@ pub fn main(init: std.process.Init) !void {
     const secure = try bearssl.to_secure_socket(socket, .server);
     defer secure.deinit();
 
-    try tardy.entry(&secure, struct {
+    try td.entry(&secure, struct {
         fn entry(rt: *Runtime, s: *const SecureSocket) !void {
-            try rt.spawn(.{ rt, s }, echo_frame, 1024 * 1024 * 16);
+            try rt.spawn(echo_frame, .{ rt, s }, .KiB(48));
         }
     }.entry);
 }
@@ -54,7 +56,8 @@ fn echo_frame(rt: *Runtime, secure: *const SecureSocket) !void {
 
     while (true) {
         var buf: [1024]u8 = undefined;
-        const count = connected.recv(rt, &buf) catch |e| if (e == error.Closed) break else return e;
+        const count = connected.recv(rt, &buf) catch |e|
+            if (e == error.Closed) break else return e;
         log.info("recv count: {d}", .{count});
         _ = connected.send(rt, buf[0..count]) catch |e| if (e == error.Closed) break else return e;
     }
