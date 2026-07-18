@@ -93,7 +93,6 @@ fn add_example(
         .target = target,
         .optimize = optimize,
         .strip = false,
-        .link_libc = if (target.result.os.tag == .windows) true else false,
     });
     mod.addImport("tardy", tardy_module);
     mod.addImport("secsock", secsock_module);
