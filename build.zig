@@ -101,8 +101,6 @@ fn add_example(
     const example = b.addExecutable(.{
         .name = b.fmt("{s}", .{name}),
         .root_module = mod,
-        // error: undefined symbol: tardy_swap_frame
-        .use_llvm = true,
     });
 
     const install_artifact = b.addInstallArtifact(example, .{});
