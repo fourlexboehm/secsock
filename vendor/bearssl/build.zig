@@ -242,15 +242,26 @@ pub fn build(b: *std.Build) !void {
     bearssl.installHeadersDirectory(upstream.path("inc/"), "", .{});
 
     b.installArtifact(bearssl);
+
+    const check = b.addLibrary(.{
+        .name = "bearssl",
+        .linkage = .static,
+        .root_module = mod,
+    });
+    const check_step = b.step(
+        "check",
+        "check bearssl for compile errors",
+    );
+    check_step.dependOn(&check.step);
 }
 
-const aead_src = &.{
+const aead_src: []const []const u8 = &.{
     "ccm.c",
     "eax.c",
     "gcm.c",
 };
 
-const codec_src = &.{
+const codec_src: []const []const u8 = &.{
     "ccopy.c",
     "dec16be.c",
     "dec32le.c",
@@ -269,7 +280,7 @@ const codec_src = &.{
     "pemenc.c",
 };
 
-const ec_src = &.{
+const ec_src: []const []const u8 = &.{
     "ec_all_m15.c",
     "ec_all_m31.c",
     "ec_c25519_i15.c",
@@ -305,7 +316,7 @@ const ec_src = &.{
     "ec_secp521r1.c",
 };
 
-const hash_src = &.{
+const hash_src: []const []const u8 = &.{
     "dig_oid.c",
     "dig_size.c",
     "ghash_ctmul32.c",
@@ -322,7 +333,7 @@ const hash_src = &.{
     "sha2small.c",
 };
 
-const int_src = &.{
+const int_src: []const []const u8 = &.{
     "i15_add.c",
     "i15_bitlen.c",
     "i15_decmod.c",
@@ -381,22 +392,22 @@ const int_src = &.{
     "i62_modpow2.c",
 };
 
-const kdf_src = &.{
+const kdf_src: []const []const u8 = &.{
     "hkdf.c",
 };
 
-const mac_src = &.{
+const mac_src: []const []const u8 = &.{
     "hmac.c",
     "hmac_ct.c",
 };
 
-const rand_src = &.{
+const rand_src: []const []const u8 = &.{
     "aesctr_drbg.c",
     "hmac_drbg.c",
     "sysrng.c",
 };
 
-const rsa_src = &.{
+const rsa_src: []const []const u8 = &.{
     "rsa_default_keygen.c",
     "rsa_default_modulus.c",
     "rsa_default_oaep_decrypt.c",
@@ -448,7 +459,7 @@ const rsa_src = &.{
     "rsa_ssl_decrypt.c",
 };
 
-const ssl_src = &.{
+const ssl_src: []const []const u8 = &.{
     "prf.c",
     "prf_md5sha1.c",
     "prf_sha256.c",
@@ -494,7 +505,7 @@ const ssl_src = &.{
     "ssl_server_minv2g.c",
 };
 
-const symcipher_src = &.{
+const symcipher_src: []const []const u8 = &.{
     "aes_big_cbcdec.c",
     "aes_big_cbcenc.c",
     "aes_big_ctr.c",
@@ -547,7 +558,7 @@ const symcipher_src = &.{
     "poly1305_i15.c",
 };
 
-const x509_src = &.{
+const x509_src: []const []const u8 = &.{
     "asn1enc.c",
     //"asn1.t0",
     "encode_ec_pk8der.c",

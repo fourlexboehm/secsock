@@ -71,6 +71,17 @@ pub fn build(b: *std.Build) void {
         .root_module = mod,
     });
 
+    const check = b.addLibrary(.{
+        .name = "s2n",
+        .linkage = .static,
+        .root_module = mod,
+    });
+    const check_step = b.step(
+        "check",
+        "check s2n for compile errors",
+    );
+    check_step.dependOn(&check.step);
+
     if (lib.rootModuleTarget().os.tag == .linux) {
         const openssl = b.dependency("openssl", .{
             .target = target,

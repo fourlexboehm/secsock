@@ -84,7 +84,7 @@ fn add_example(
     b: *std.Build,
     name: []const u8,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     tardy_module: *std.Build.Module,
     secsock_module: *std.Build.Module,
 ) void {
