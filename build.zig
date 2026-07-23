@@ -32,6 +32,8 @@ pub fn build(b: *std.Build) void {
     lib.addImport("tardy", tardy);
     lib.addImport("options", options.createModule());
 
+    const check = b.step("check", "Check compilation errors");
+
     switch (tls) {
         .bearssl => if (b.lazyDependency("bearssl", .{
             .target = target,
@@ -40,6 +42,12 @@ pub fn build(b: *std.Build) void {
             .BR_BE_UNALIGNED = false,
         })) |bearssl| {
             const bearssl_lib = bearssl.artifact("bearssl");
+            const builder = bearssl.builder;
+
+            const bearssl_check_step = &builder.top_level_steps.get(
+                "check",
+            ).?.step;
+            check.dependOn(bearssl_check_step);
 
             const upstream = bearssl.builder.dependency("bearssl", .{
                 .target = target,
@@ -54,15 +62,28 @@ pub fn build(b: *std.Build) void {
 
             lib.linkLibrary(bearssl_lib);
             lib.addImport("bearssl_h", bearssl_h);
-            add_example(b, "bearssl", target, optimize, tardy, lib);
+            add_example(
+                b,
+                "bearssl",
+                target,
+                optimize,
+                tardy,
+                lib,
+            );
         },
         .s2n_tls => if (b.lazyDependency("s2n_tls", .{
             .target = target,
             .optimize = optimize,
         })) |s2n_tls| {
             const s2n_lib = s2n_tls.artifact("s2n");
+            const builder = s2n_tls.builder;
 
-            const upstream = s2n_tls.builder.dependency("s2n_tls", .{
+            const s2n_check_step = &builder.top_level_steps.get(
+                "check",
+            ).?.step;
+            check.dependOn(s2n_check_step);
+
+            const upstream = builder.dependency("s2n_tls", .{
                 .target = target,
                 .optimize = optimize,
             });
@@ -75,7 +96,14 @@ pub fn build(b: *std.Build) void {
 
             lib.linkLibrary(s2n_lib);
             lib.addImport("s2n_h", s2n_h);
-            add_example(b, "s2n", target, optimize, tardy, lib);
+            add_example(
+                b,
+                "s2n",
+                target,
+                optimize,
+                tardy,
+                lib,
+            );
         },
     }
 }
