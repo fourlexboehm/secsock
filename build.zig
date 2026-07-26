@@ -42,26 +42,17 @@ pub fn build(b: *std.Build) void {
             .BR_BE_UNALIGNED = false,
         })) |bearssl| {
             const bearssl_lib = bearssl.artifact("bearssl");
-            const builder = bearssl.builder;
+            const bearssl_h = bearssl.module("bearssl_h");
 
+            const builder = bearssl.builder;
             const bearssl_check_step = &builder.top_level_steps.get(
                 "check",
             ).?.step;
             check.dependOn(bearssl_check_step);
 
-            const upstream = bearssl.builder.dependency("bearssl", .{
-                .target = target,
-                .optimize = optimize,
-            });
-            const bearssl_h = b.addTranslateC(.{
-                .optimize = optimize,
-                .target = target,
-                .link_libc = true,
-                .root_source_file = upstream.path("inc/bearssl.h"),
-            }).createModule();
-
             lib.linkLibrary(bearssl_lib);
             lib.addImport("bearssl_h", bearssl_h);
+
             add_example(
                 b,
                 "bearssl",
