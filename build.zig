@@ -67,26 +67,17 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         })) |s2n_tls| {
             const s2n_lib = s2n_tls.artifact("s2n");
-            const builder = s2n_tls.builder;
+            const s2n_h = s2n_tls.module("s2n_h");
 
+            const builder = s2n_tls.builder;
             const s2n_check_step = &builder.top_level_steps.get(
                 "check",
             ).?.step;
             check.dependOn(s2n_check_step);
 
-            const upstream = builder.dependency("s2n_tls", .{
-                .target = target,
-                .optimize = optimize,
-            });
-            const s2n_h = b.addTranslateC(.{
-                .optimize = optimize,
-                .target = target,
-                .link_libc = true,
-                .root_source_file = upstream.path("api/s2n.h"),
-            }).createModule();
-
             lib.linkLibrary(s2n_lib);
             lib.addImport("s2n_h", s2n_h);
+
             add_example(
                 b,
                 "s2n",

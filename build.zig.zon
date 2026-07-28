@@ -14,16 +14,16 @@
             .lazy = true,
         },
         .s2n_tls = .{
-            .path = "vendor/s2n-tls",
+            .url = "git+https://github.com/tardy-org/s2n-tls-zig?ref=main#4a91a46369791818641598a0280a5003e77c5656",
+            .hash = "s2n_tls-1.7.3-n2nk3CZtAgCB6fk0RP5muyB0ERZPVkIWML2DK_PcV1Q9",
             .lazy = true,
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "src",
-        "vendor",
         "LICENSE",
         "README.md",
+        "src",
     },
 }
