@@ -2,13 +2,13 @@
 pub const Tls = @This();
 
 socket: Socket,
-tls: VTable,
+vtable: VTable,
 
 pub fn unsecured(socket: Socket) Tls {
     return .{
         .socket = socket,
-        .tls = .{
-            .tls_impl = undefined,
+        .vtable = .{
+            .ctx = undefined,
             .deinit = struct {
                 fn deinit(_: *anyopaque) void {}
             }.deinit,
@@ -37,30 +37,30 @@ pub fn unsecured(socket: Socket) Tls {
     };
 }
 
-pub fn deinit(self: *const Tls) void {
-    return self.tls.deinit(self.tls.tls_impl);
+pub fn deinit(tls: *const Tls) void {
+    return tls.vtable.deinit(tls.vtable.ctx);
 }
 
-pub fn accept(self: *const Tls, rt: *Runtime) !*Tls {
-    return try self.tls.accept(self.socket, rt, self.tls.tls_impl);
+pub fn accept(tls: *const Tls, rt: *Runtime) !*Tls {
+    return try tls.vtable.accept(tls.socket, rt, tls.vtable.ctx);
 }
 
-pub fn connect(self: *const Tls, rt: *Runtime) !void {
-    return try self.tls.connect(self.socket, rt, self.tls.tls_impl);
+pub fn connect(tls: *const Tls, rt: *Runtime) !void {
+    return try tls.vtable.connect(tls.socket, rt, tls.vtable.ctx);
 }
 
-pub fn recv(self: *const Tls, rt: *Runtime, buffer: []u8) !usize {
-    return try self.tls.recv(self.socket, rt, self.tls.tls_impl, buffer);
+pub fn recv(tls: *const Tls, rt: *Runtime, buffer: []u8) !usize {
+    return try tls.vtable.recv(tls.socket, rt, tls.vtable.ctx, buffer);
 }
 
-pub fn send(self: *const Tls, rt: *Runtime, buffer: []const u8) !usize {
-    return try self.tls.send(self.socket, rt, self.tls.tls_impl, buffer);
+pub fn send(tls: *const Tls, rt: *Runtime, buffer: []const u8) !usize {
+    return try tls.vtable.send(tls.socket, rt, tls.vtable.ctx, buffer);
 }
 
-pub fn send_all(self: *const Tls, rt: *Runtime, buffer: []const u8) !usize {
+pub fn send_all(tls: *const Tls, rt: *Runtime, buffer: []const u8) !usize {
     var count: usize = 0;
     while (count != buffer.len) {
-        count += self.send(rt, buffer[count..]) catch |e| switch (e) {
+        count += tls.send(rt, buffer[count..]) catch |e| switch (e) {
             error.Closed => return count,
             else => return e,
         };
@@ -70,12 +70,12 @@ pub fn send_all(self: *const Tls, rt: *Runtime, buffer: []const u8) !usize {
 }
 
 const VTable = struct {
-    tls_impl: *anyopaque,
+    ctx: *anyopaque,
     deinit: *const fn (tls: *anyopaque) void,
-    accept: *const fn (Socket, *Runtime, *anyopaque) anyerror!*Tls,
-    connect: *const fn (Socket, *Runtime, *anyopaque) anyerror!void,
-    recv: *const fn (Socket, *Runtime, *anyopaque, []u8) anyerror!usize,
-    send: *const fn (Socket, *Runtime, *anyopaque, []const u8) anyerror!usize,
+    accept: *const fn (Socket, *Runtime, ctx: *anyopaque) anyerror!*Tls,
+    connect: *const fn (Socket, *Runtime, ctx: *anyopaque) anyerror!void,
+    recv: *const fn (Socket, *Runtime, ctx: *anyopaque, []u8) anyerror!usize,
+    send: *const fn (Socket, *Runtime, ctx: *anyopaque, []const u8) anyerror!usize,
 };
 
 pub const Mode = enum { client, server };
