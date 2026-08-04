@@ -242,20 +242,19 @@ pub fn tls(
     bearssl: *BearSSL,
     allocator: mem.Allocator,
     io: std.Io,
-    host: Socket.Config,
-    mode: Socket.Mode,
+    config: Socket.Config,
 ) !Secsock {
     const socket = allocator.create(Socket) catch @panic("OOM");
     socket.* = try .init(io, .{
-        .tcp = .{ .host = host.host, .port = host.port },
+        .tcp = config,
     });
+    errdefer allocator.destroy(socket);
     errdefer socket.close_blocking();
 
     try socket.bind();
-    // TODO: make backlog configurable
-    try socket.listen(4096);
+    try socket.listen(config.backlog);
 
-    switch (mode) {
+    switch (config.mode) {
         .client => @panic("Client bearssl not supported yet!"),
         .server => {
             return server.to_secure_socket_server(
