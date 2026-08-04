@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     options.addOption(TlsImpl, "tls", tls);
 
     const lib = b.addModule("secsock", .{
-        .root_source_file = b.path("src/lib.zig"),
+        .root_source_file = b.path("src/Secsock.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -41,8 +41,8 @@ pub fn build(b: *std.Build) void {
             .BR_LE_UNALIGNED = false,
             .BR_BE_UNALIGNED = false,
         })) |bearssl| {
-            const bearssl_lib = bearssl.artifact("bearssl");
-            const bearssl_h = bearssl.module("bearssl_h");
+            const bearssl_h = bearssl.module("bearssl.h");
+            lib.addImport("bearssl.h", bearssl_h);
 
             const builder = bearssl.builder;
             const bearssl_check_step = &builder.top_level_steps.get(
@@ -50,8 +50,8 @@ pub fn build(b: *std.Build) void {
             ).?.step;
             check.dependOn(bearssl_check_step);
 
+            const bearssl_lib = bearssl.artifact("bearssl");
             lib.linkLibrary(bearssl_lib);
-            lib.addImport("bearssl_h", bearssl_h);
 
             add_example(
                 b,
@@ -66,8 +66,8 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         })) |s2n_tls| {
-            const s2n_lib = s2n_tls.artifact("s2n");
-            const s2n_h = s2n_tls.module("s2n_h");
+            const s2n_h = s2n_tls.module("s2n.h");
+            lib.addImport("s2n.h", s2n_h);
 
             const builder = s2n_tls.builder;
             const s2n_check_step = &builder.top_level_steps.get(
@@ -75,8 +75,8 @@ pub fn build(b: *std.Build) void {
             ).?.step;
             check.dependOn(s2n_check_step);
 
+            const s2n_lib = s2n_tls.artifact("s2n");
             lib.linkLibrary(s2n_lib);
-            lib.addImport("s2n_h", s2n_h);
 
             add_example(
                 b,
