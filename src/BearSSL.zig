@@ -1,22 +1,33 @@
 pub const BearSSL = @This();
 
-x509: ?h.br_x509_certificate,
-pkey: ?PrivateKey,
-cert_signer_algo: ?c_int,
+x509: h.br_x509_certificate,
+pkey: PrivateKey,
+cert_signer_algo: c_int,
 
-pub fn init() BearSSL {
-    return .{
-        .x509 = null,
-        .pkey = null,
-        .cert_signer_algo = null,
-    };
+pub fn init(
+    allocator: mem.Allocator,
+    cert_section_title: ?[]const u8,
+    cert: []const u8,
+    key_section_title: ?[]const u8,
+    key: []const u8,
+) !BearSSL {
+    var bearssl: BearSSL = undefined;
+
+    try bearssl.add_cert_chain(
+        allocator,
+        cert_section_title,
+        cert,
+        key_section_title,
+        key,
+    );
+
+    return bearssl;
 }
 
 pub fn deinit(bearssl: BearSSL, allocator: mem.Allocator) void {
-    if (bearssl.x509) |x509|
-        allocator.free(x509.data[0..x509.data_len]);
+    allocator.free(bearssl.x509.data[0..bearssl.x509.data_len]);
 
-    if (bearssl.pkey) |pkey| switch (pkey) {
+    switch (bearssl.pkey) {
         .rsa => |rsa| {
             allocator.free(rsa.p[0..rsa.plen]);
             allocator.free(rsa.q[0..rsa.qlen]);
@@ -27,7 +38,42 @@ pub fn deinit(bearssl: BearSSL, allocator: mem.Allocator) void {
         .ec => |ec| {
             allocator.free(ec.x[0..ec.xlen]);
         },
+    }
+}
+
+fn add_cert_chain(
+    bearssl: *BearSSL,
+    allocator: mem.Allocator,
+    cert_section_title: ?[]const u8,
+    cert: []const u8,
+    key_section_title: ?[]const u8,
+    key: []const u8,
+) !void {
+    const decoded_cert = try decode_pem(
+        allocator,
+        cert_section_title,
+        cert,
+    );
+    errdefer allocator.free(decoded_cert);
+
+    bearssl.x509 = .{
+        .data = @constCast(decoded_cert.ptr),
+        .data_len = decoded_cert.len,
     };
+
+    const decoded_key = try decode_pem(
+        allocator,
+        key_section_title,
+        key,
+    );
+    defer allocator.free(decoded_key);
+
+    bearssl.pkey = try decode_private_key(
+        allocator,
+        decoded_key,
+    );
+
+    bearssl.cert_signer_algo = get_cert_signer_algo(&bearssl.x509);
 }
 
 /// This takes in the PEM section and the given bytes and decodes it into a byte format
@@ -174,51 +220,49 @@ fn get_cert_signer_algo(x509: *const h.br_x509_certificate) c_int {
     return h.br_x509_decoder_get_signer_key_type(&x509_ctx);
 }
 
-pub fn add_cert_chain(
+pub fn tlsWithSock(
     bearssl: *BearSSL,
     allocator: mem.Allocator,
-    cert_section_title: ?[]const u8,
-    cert: []const u8,
-    key_section_title: ?[]const u8,
-    key: []const u8,
-) !void {
-    const decoded_cert = try decode_pem(
-        allocator,
-        cert_section_title,
-        cert,
-    );
-    errdefer allocator.free(decoded_cert);
-
-    bearssl.x509 = .{
-        .data = @constCast(decoded_cert.ptr),
-        .data_len = decoded_cert.len,
-    };
-
-    const decoded_key = try decode_pem(
-        allocator,
-        key_section_title,
-        key,
-    );
-    defer allocator.free(decoded_key);
-
-    bearssl.pkey = try decode_private_key(
-        allocator,
-        decoded_key,
-    );
-
-    bearssl.cert_signer_algo = get_cert_signer_algo(&bearssl.x509.?);
-}
-
-pub fn to_secure_socket(
-    bearssl: *BearSSL,
-    socket: Socket,
-    mode: bearssl.Mode,
-) !*bearssl {
+    socket: *const Socket,
+    mode: Socket.Mode,
+) !Secsock {
     switch (mode) {
         .client => @panic("Client bearssl not supported yet!"),
         .server => {
-            const server = @import("server.zig");
-            return server.to_secure_socket_server(bearssl, socket);
+            return server.to_secure_socket_server(
+                bearssl,
+                allocator,
+                socket,
+            );
+        },
+    }
+}
+
+pub fn tls(
+    bearssl: *BearSSL,
+    allocator: mem.Allocator,
+    io: std.Io,
+    host: Socket.Config,
+    mode: Socket.Mode,
+) !Secsock {
+    const socket = allocator.create(Socket) catch @panic("OOM");
+    socket.* = try .init(io, .{
+        .tcp = .{ .host = host.host, .port = host.port },
+    });
+    errdefer socket.close_blocking();
+
+    try socket.bind();
+    // TODO: make backlog configurable
+    try socket.listen(4096);
+
+    switch (mode) {
+        .client => @panic("Client bearssl not supported yet!"),
+        .server => {
+            return server.to_secure_socket_server(
+                bearssl,
+                allocator,
+                socket,
+            );
         },
     }
 }
@@ -306,3 +350,6 @@ const mem = std.mem;
 pub const h = @import("bearssl.h");
 const tardy = @import("tardy");
 const Socket = tardy.net.Socket;
+
+const server = @import("bearssl/server.zig");
+const Secsock = @import("Secsock.zig");
