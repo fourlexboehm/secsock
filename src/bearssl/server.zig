@@ -91,12 +91,15 @@ const Impl = struct {
     fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
         const cb = ctx.cb;
-        const sock = try cb.socket.accept(r);
+
+        const sock = r.allocator.create(Socket) catch @panic("OOM");
+        sock.* = try cb.socket.accept(r);
+        errdefer r.allocator.destroy(sock);
         errdefer sock.close_blocking();
 
         const new_tls = try ctx.bearssl.tlsWithSock(
             r.allocator,
-            &sock,
+            sock,
             .server,
         );
         // if we fail, we want to clean this connection up.
