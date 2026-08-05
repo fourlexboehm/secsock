@@ -220,13 +220,13 @@ fn get_cert_signer_algo(x509: *const h.br_x509_certificate) c_int {
     return h.br_x509_decoder_get_signer_key_type(&x509_ctx);
 }
 
-pub fn tlsWithSock(
+fn tlsWithSock(
     bearssl: *BearSSL,
     allocator: mem.Allocator,
     socket: *const Socket,
-    mode: Socket.Mode,
+    config: Socket.Config,
 ) !Secsock {
-    switch (mode) {
+    switch (config.mode) {
         .client => @panic("Client bearssl not supported yet!"),
         .server => {
             return server.to_secure_socket_server(
@@ -238,32 +238,16 @@ pub fn tlsWithSock(
     }
 }
 
-pub fn tls(
-    bearssl: *BearSSL,
-    allocator: mem.Allocator,
-    io: std.Io,
-    config: Socket.Config,
-) !Secsock {
+pub fn tls(bearssl: *BearSSL, allocator: mem.Allocator, config: Socket.Config) !Secsock {
     const socket = allocator.create(Socket) catch @panic("OOM");
-    socket.* = try .init(io, .{
-        .tcp = config,
-    });
+    socket.* = try .init(.{ .tcp = config });
     errdefer allocator.destroy(socket);
     errdefer socket.close_blocking();
 
     try socket.bind();
     try socket.listen(config.backlog);
 
-    switch (config.mode) {
-        .client => @panic("Client bearssl not supported yet!"),
-        .server => {
-            return server.to_secure_socket_server(
-                bearssl,
-                allocator,
-                socket,
-            );
-        },
-    }
+    bearssl.tlsWithSock(allocator, socket, config);
 }
 
 pub const EngineStatus = enum {

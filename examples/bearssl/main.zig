@@ -21,7 +21,6 @@ pub fn main(init: std.process.Init) !void {
 
     const tls: Secsock = try bearssl.tls(
         init.gpa,
-        init.io,
         .{
             .host = "127.0.0.1",
             .port = 9862,
