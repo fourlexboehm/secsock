@@ -52,6 +52,7 @@ const Impl = struct {
             .impl => {
                 ctx.raw.socket.close_blocking();
                 allocator.destroy(ctx.raw.socket);
+                allocator.destroy(ctx);
             },
             else => {},
         }
@@ -65,8 +66,13 @@ const Impl = struct {
         errdefer r.allocator.destroy(new_socket);
         errdefer new_socket.close_blocking();
 
-        var unsecured = initWithSock(new_socket);
-        unsecured.init_by = .impl;
+        const unsecured = try r.allocator.create(Unsecured);
+        errdefer r.allocator.destroy(unsecured);
+
+        unsecured.* = .{
+            .socket = new_socket,
+            .init_by = .impl,
+        };
 
         return unsecured.raw();
     }
