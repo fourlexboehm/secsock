@@ -1,95 +1,79 @@
 const Unsecured = @This();
 
-socket: *const Socket,
-init_by: enum(u8) { init, init_with_sock, impl },
+pub const empty: Unsecured = .{};
 
-pub fn init(config: Socket.Config, allocator: mem.Allocator) Unsecured {
-    const socket = allocator.create(Socket) catch @panic("OOM");
-    socket.* = .init(config) catch unreachable;
+pub fn tcp(
+    _: *Unsecured,
+    allocator: mem.Allocator,
+    config: Socket.Config,
+) !Secsock {
+    const socket = try allocator.create(Socket);
+    socket.* = try .init(.{ .tcp = config });
+    errdefer allocator.destroy(socket);
+    errdefer socket.close_blocking();
 
-    socket.bind() catch unreachable;
-    socket.listen(config.backlog) catch unreachable;
+    try socket.bind();
+    try socket.listen(config.backlog);
 
-    return .{
-        .socket = socket,
-        .init_by = .init,
-    };
+    return try tcpWithSock(allocator, socket);
 }
 
-/// if `initWithSock` is used to initialize `Unsecured`
-/// then you are responsible for closing and free the socket
-/// if applicable
-pub fn initWithSock(socket: *const Socket) Unsecured {
-    return .{
-        .socket = socket,
-        .init_by = .init_with_sock,
-    };
-}
+fn tcpWithSock(
+    allocator: mem.Allocator,
+    socket: *const Socket,
+) !Secsock {
+    const context = try allocator.create(Impl);
+    errdefer allocator.destroy(context);
 
-pub fn deinit(unsecured: Unsecured, allocator: mem.Allocator) void {
-    switch (unsecured.init_by) {
-        .init => {
-            unsecured.socket.close_blocking();
-            allocator.destroy(unsecured.socket);
-        },
-        else => {},
-    }
-}
+    context.* = .{ .socket = socket };
 
-pub fn raw(unsecured: *const Unsecured) Secsock {
     return .{
-        .ctx = unsecured,
+        .ctx = context,
         .vtable = &vtable,
     };
 }
 
 const Impl = struct {
-    raw: Unsecured,
+    socket: *const Socket,
 
     fn deinit(ct: *const anyopaque, allocator: mem.Allocator) void {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        switch (ctx.raw.init_by) {
-            .impl => {
-                ctx.raw.socket.close_blocking();
-                allocator.destroy(ctx.raw.socket);
-                allocator.destroy(ctx);
-            },
-            else => {},
-        }
+
+        ctx.socket.close_blocking();
+        allocator.destroy(ctx.socket);
+        allocator.destroy(ctx);
     }
 
     fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
 
         const new_socket = try r.allocator.create(Socket);
-        new_socket.* = try ctx.raw.socket.accept(r);
+        new_socket.* = try ctx.socket.accept(r);
         errdefer r.allocator.destroy(new_socket);
         errdefer new_socket.close_blocking();
 
-        const unsecured = try r.allocator.create(Unsecured);
-        errdefer r.allocator.destroy(unsecured);
+        const new_raw_tcp = try tcpWithSock(
+            r.allocator,
+            new_socket,
+        );
+        errdefer new_raw_tcp.deinit(r.allocator);
 
-        unsecured.* = .{
-            .socket = new_socket,
-            .init_by = .impl,
-        };
-
-        return unsecured.raw();
+        return new_raw_tcp;
     }
 
     fn connect(ct: *const anyopaque, r: *Runtime) !void {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        try ctx.raw.socket.connect(r);
+        try ctx.socket.connect(r);
     }
 
     fn recv(ct: *anyopaque, r: *Runtime, buf: []u8) !usize {
         const ctx: *Impl = @ptrCast(@alignCast(ct));
-        return try ctx.raw.socket.recv(r, buf);
+        return try ctx.socket.recv(r, buf);
     }
 
     fn send(ct: *anyopaque, r: *Runtime, buf: []const u8) !usize {
         const ctx: *Impl = @ptrCast(@alignCast(ct));
-        return try ctx.raw.socket.send(r, buf);
+        return try ctx.socket.send(r, buf);
     }
 };
 
