@@ -3,7 +3,7 @@ const Unsecured = @This();
 pub const empty: Unsecured = .{};
 
 pub fn tcp(
-    _: *Unsecured,
+    _: *const Unsecured,
     allocator: mem.Allocator,
     config: Socket.Config,
 ) !Secsock {
