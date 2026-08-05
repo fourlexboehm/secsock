@@ -1,64 +1,69 @@
-const std = @import("std");
-
-const secsock = @import("secsock");
-const SecureSocket = secsock.SecureSocket;
-const tardy = @import("tardy");
-const Socket = tardy.net.Socket;
-const Runtime = tardy.Runtime;
-
 const Tardy = tardy.Tardy(.auto);
 
-const log = std.log.scoped(.@"examples/bearssl");
-
-// curl -vk https://127.0.0.1:9862
+/// curl -vk https://127.0.0.1:9862
 pub fn main(init: std.process.Init) !void {
-    var td: Tardy = try .init(init.gpa, init.io, .{ .threading = .single });
-    defer td.deinit();
+    var bearssl: Secsock.BearSSL = try .init(
+        init.gpa,
+        "CERTIFICATE",
+        @embedFile("certs/rsa_cert.pem"),
+        "PRIVATE KEY",
+        @embedFile("certs/rsa_key.pem"),
+    );
+    defer bearssl.deinit(init.gpa);
 
-    var bearssl: secsock.BearSSL = .init(init.gpa);
-    defer bearssl.deinit();
-
-    // try bearssl.add_cert_chain(
+    // var bearssl: Secsock.BearSSL = try .init(
+    //     init.gpa,
     //     "CERTIFICATE",
     //     @embedFile("certs/cert.pem"),
     //     "EC PRIVATE KEY",
     //     @embedFile("certs/key.pem"),
     // );
 
-    try bearssl.add_cert_chain(
-        "CERTIFICATE",
-        @embedFile("certs/rsa_cert.pem"),
-        "PRIVATE KEY",
-        @embedFile("certs/rsa_key.pem"),
+    const tls: Secsock = try bearssl.tls(
+        init.gpa,
+        init.io,
+        .{
+            .host = "127.0.0.1",
+            .port = 9862,
+        },
     );
+    defer tls.deinit(init.gpa);
 
-    const socket: Socket = try .init(init.io, .{
-        .tcp = .{ .host = "127.0.0.1", .port = 9862 },
+    var td: Tardy = try .init(init.gpa, init.io, .{
+        .threading = .single,
     });
-    defer socket.close_blocking();
-    try socket.bind();
-    try socket.listen(128);
+    defer td.deinit();
 
-    const secure = try bearssl.to_secure_socket(socket, .server);
-    defer secure.deinit();
-
-    try td.entry(&secure, struct {
-        fn entry(rt: *Runtime, s: *const SecureSocket) !void {
-            try rt.spawn(echo_frame, .{ rt, s }, .KiB(48));
+    try td.entry(&tls, struct {
+        fn entry(rt: *tardy.Runtime, s: *const Secsock) !void {
+            try rt.spawn(
+                echo_frame,
+                .{ rt, s },
+                .KiB(48),
+            );
         }
     }.entry);
 }
 
-fn echo_frame(rt: *Runtime, secure: *const SecureSocket) !void {
-    const connected = try secure.accept(rt);
-    defer connected.deinit();
-    defer connected.socket.close_blocking();
+fn echo_frame(rt: *tardy.Runtime, tls: *const Secsock) !void {
+    var connected = try tls.accept(rt);
+    defer connected.deinit(rt.allocator);
 
     while (true) {
         var buf: [1024]u8 = undefined;
         const count = connected.recv(rt, &buf) catch |e|
             if (e == error.Closed) break else return e;
+
         log.info("recv count: {d}", .{count});
-        _ = connected.send(rt, buf[0..count]) catch |e| if (e == error.Closed) break else return e;
+
+        _ = connected.send(rt, buf[0..count]) catch |e|
+            if (e == error.Closed) break else return e;
     }
 }
+
+const log = std.log.scoped(.@"examples/bearssl");
+
+const std = @import("std");
+
+const Secsock = @import("secsock");
+const tardy = @import("tardy");
