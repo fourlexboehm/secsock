@@ -220,13 +220,14 @@ fn get_cert_signer_algo(x509: *const h.br_x509_certificate) c_int {
     return h.br_x509_decoder_get_signer_key_type(&x509_ctx);
 }
 
-fn tlsWithSock(
+/// internal API
+pub fn tlsWithSock(
     bearssl: *BearSSL,
     allocator: mem.Allocator,
     socket: *const Socket,
-    config: Socket.Config,
+    mode: Socket.Mode,
 ) !Secsock {
-    switch (config.mode) {
+    switch (mode) {
         .client => @panic("Client bearssl not supported yet!"),
         .server => {
             return server.to_secure_socket_server(
@@ -247,7 +248,14 @@ pub fn tls(bearssl: *BearSSL, allocator: mem.Allocator, config: Socket.Config) !
     try socket.bind();
     try socket.listen(config.backlog);
 
-    bearssl.tlsWithSock(allocator, socket, config);
+    const secsock = try bearssl.tlsWithSock(
+        allocator,
+        socket,
+        config.mode,
+    );
+    errdefer secsock.deinit(allocator);
+
+    return secsock;
 }
 
 pub const EngineStatus = enum {
