@@ -1,52 +1,46 @@
-const std = @import("std");
-
-const secsock = @import("secsock");
-const tardy = @import("tardy");
-const Runtime = tardy.Runtime;
-const Socket = tardy.net.Socket;
-
-const log = std.log.scoped(.@"examples/s2n");
-
-const Tardy = @import("tardy").Tardy(.auto);
+const Tardy = tardy.Tardy(.auto);
 
 // curl -vk https://127.0.0.1:9862
 pub fn main(init: std.process.Init) !void {
+    // ideally, this is the pattern we can utilize where the
+    // tls vendor is initialized outside of tardy and shared internally.
+    var s2n: Secsock.S2N = try .init(
+        @embedFile("cert.pem"),
+        @embedFile("key.pem"),
+    );
+    defer s2n.deinit();
+
+    const tls: Secsock = try s2n.tls(init.gpa, .{ .host = "127.0.0.1", .port = 9862 });
+    defer tls.deinit(init.gpa);
+
     var td: Tardy = try .init(init.gpa, init.io, .{ .threading = .single });
     defer td.deinit();
 
-    // ideally, this is the pattern we can utilize where the
-    // tls vendor is initialized outside of tardy and shared internally.
-    var s2n = try secsock.s2n.init(init.gpa);
-    defer s2n.deinit();
-    try s2n.add_cert_chain(@embedFile("cert.pem"), @embedFile("key.pem"));
-
-    try td.entry(&s2n, struct {
-        fn entry(rt: *Runtime, s: *secsock.s2n) !void {
-            try rt.spawn(echo_frame, .{ rt, s }, .KiB(48));
+    try td.entry(&tls, struct {
+        fn entry(rt: *tardy.Runtime, stls: *const Secsock) !void {
+            try rt.spawn(echo_frame, .{ rt, stls }, .KiB(48));
         }
     }.entry);
 }
 
-fn echo_frame(rt: *Runtime, s2n: *secsock.s2n) !void {
-    const socket: Socket = try .init(rt.io, .{
-        .tcp = .{ .host = "127.0.0.1", .port = 9862 },
-    });
-    defer socket.close_blocking();
-    try socket.bind();
-    try socket.listen(128);
-
-    const secure = try s2n.to_secure_socket(rt.io, socket, .server);
-    defer secure.deinit();
-
-    const connected = try secure.accept(rt);
-    defer connected.deinit();
-    defer connected.socket.close_blocking();
+fn echo_frame(rt: *tardy.Runtime, tls: *const Secsock) !void {
+    var connected = try tls.accept(rt);
+    defer connected.deinit(rt.allocator);
 
     while (true) {
         var buf: [1024]u8 = undefined;
         const count = connected.recv(rt, &buf) catch |e|
             if (e == error.Closed) break else return e;
+
         log.info("recv count: {d}", .{count});
-        _ = connected.send(rt, buf[0..count]) catch |e| if (e == error.Closed) break else return e;
+        _ = connected.send(rt, buf[0..count]) catch |e|
+            if (e == error.Closed) break else return e;
     }
 }
+
+const log = std.log.scoped(.@"examples/s2n");
+
+const std = @import("std");
+
+const Secsock = @import("secsock");
+const tardy = @import("tardy");
