@@ -72,13 +72,13 @@ const Impl = struct {
     fn info(ct: *const anyopaque) Secsock.Info {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
 
-        var buf: [20:0]u8 = @splat(0x0);
+        var buf: [21:0]u8 = @splat(0x0);
         _ = mem.print(&buf, "{f}", .{
             ctx.cb.socket.addr,
         }) catch unreachable;
 
         return .{
-            .name = "bearssl",
+            .name = .bearssl,
             .address_fmt = buf,
         };
     }
