@@ -14,7 +14,10 @@ pub fn main(init: std.process.Init) !void {
     defer tcp.deinit(init.gpa);
 
     const info = tcp.info();
-    log.warn("info: name: {s}, format:{s}", .{ info.name, info.address_fmt });
+    log.info("info: name: {s}, format:{s}", .{
+        info.name,
+        info.address_fmt,
+    });
 
     var td: Tardy = try .init(init.gpa, init.io, .{
         .threading = .single,

@@ -147,7 +147,7 @@ const Impl = struct {
 
         var buf: [20:0]u8 = @splat(0x0);
         _ = mem.print(&buf, "{f}", .{
-            ctx.socket.addr,
+            ctx.cb.socket.addr,
         }) catch unreachable;
 
         return .{

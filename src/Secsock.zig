@@ -28,7 +28,7 @@ pub fn send(tls: *Secsock, rt: *Runtime, buffer: []const u8) !usize {
     return try tls.vtable.send(tls.ctx, rt, buffer);
 }
 
-pub fn send_all(tls: *const Secsock, rt: *Runtime, buffer: []const u8) !usize {
+pub fn send_all(tls: *Secsock, rt: *Runtime, buffer: []const u8) !usize {
     var count: usize = 0;
     while (count != buffer.len) {
         count += tls.send(rt, buffer[count..]) catch |e|
