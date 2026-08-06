@@ -19,13 +19,10 @@ pub fn main(init: std.process.Init) !void {
     //     @embedFile("certs/key.pem"),
     // );
 
-    const tls: Secsock = try bearssl.tls(
-        init.gpa,
-        .{
-            .host = "127.0.0.1",
-            .port = 9862,
-        },
-    );
+    const tls: Secsock = try bearssl.tls(init.gpa, .{
+        .host = "127.0.0.1",
+        .port = 9862,
+    });
     defer tls.deinit(init.gpa);
 
     var td: Tardy = try .init(init.gpa, init.io, .{
