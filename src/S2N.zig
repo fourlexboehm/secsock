@@ -142,6 +142,20 @@ const Impl = struct {
     conn: *h.s2n_connection,
     cb: *Callback,
 
+    fn info(ct: *const anyopaque) Secsock.Info {
+        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+
+        var buf: [20:0]u8 = @splat(0x0);
+        _ = mem.print(&buf, "{f}", .{
+            ctx.socket.addr,
+        }) catch unreachable;
+
+        return .{
+            .name = "s2n-tls",
+            .address_fmt = buf,
+        };
+    }
+
     fn deinit(ct: *const anyopaque, allocator: mem.Allocator) void {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
 
@@ -282,6 +296,7 @@ const Callback = struct {
 };
 
 const vtable: Secsock.VTable = .{
+    .info = Impl.info,
     .deinit = Impl.deinit,
     .accept = Impl.accept,
     .connect = Impl.connect,

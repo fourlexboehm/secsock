@@ -62,20 +62,26 @@ pub fn to_secure_socket_server(
     };
 }
 
-const vtable: Secsock.VTable = .{
-    .deinit = Impl.deinit,
-    .accept = Impl.accept,
-    .connect = Impl.connect,
-    .recv = Impl.recv,
-    .send = Impl.send,
-};
-
 const Impl = struct {
     bearssl: *BearSSL,
     io_buf: []const u8,
     sslio: h.br_sslio_context,
     cb: *Callback,
     server: h.br_ssl_server_context,
+
+    fn info(ct: *const anyopaque) Secsock.Info {
+        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+
+        var buf: [20:0]u8 = @splat(0x0);
+        _ = mem.print(&buf, "{f}", .{
+            ctx.socket.addr,
+        }) catch unreachable;
+
+        return .{
+            .name = "bearssl",
+            .address_fmt = buf,
+        };
+    }
 
     fn deinit(ct: *const anyopaque, alloc: mem.Allocator) void {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
@@ -213,6 +219,15 @@ const Callback = struct {
         };
         return @intCast(count);
     }
+};
+
+const vtable: Secsock.VTable = .{
+    .info = Impl.info,
+    .deinit = Impl.deinit,
+    .accept = Impl.accept,
+    .connect = Impl.connect,
+    .recv = Impl.recv,
+    .send = Impl.send,
 };
 
 const log = std.log.scoped(.@"bearssl/server");

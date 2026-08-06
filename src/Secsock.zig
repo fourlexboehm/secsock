@@ -4,6 +4,10 @@ pub const Secsock = @This();
 ctx: *anyopaque,
 vtable: *const VTable,
 
+pub fn info(tls: *const Secsock) Info {
+    return tls.vtable.info(tls.ctx);
+}
+
 pub fn deinit(tls: *const Secsock, allocator: mem.Allocator) void {
     tls.vtable.deinit(tls.ctx, allocator);
 }
@@ -13,7 +17,7 @@ pub fn accept(tls: *const Secsock, rt: *Runtime) !Secsock {
 }
 
 pub fn connect(tls: *const Secsock, rt: *Runtime) !void {
-    return try tls.vtable.connect(tls.ctx, rt);
+    try tls.vtable.connect(tls.ctx, rt);
 }
 
 pub fn recv(tls: *Secsock, rt: *Runtime, buffer: []u8) !usize {
@@ -37,7 +41,13 @@ pub fn send_all(tls: *const Secsock, rt: *Runtime, buffer: []const u8) !usize {
     return count;
 }
 
+pub const Info = struct {
+    name: [:0]const u8,
+    address_fmt: [20:0]u8,
+};
+
 pub const VTable = struct {
+    info: *const fn (ctx: *const anyopaque) Info,
     deinit: *const fn (ctx: *const anyopaque, mem.Allocator) void,
     accept: *const fn (ctx: *const anyopaque, *Runtime) anyerror!Secsock,
     connect: *const fn (ctx: *const anyopaque, *Runtime) anyerror!void,
