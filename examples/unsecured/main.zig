@@ -16,7 +16,7 @@ pub fn main(init: std.process.Init) !void {
     const info = tcp.info();
     log.info("tls: '{t}', address: ({s})", .{
         info.name,
-        info.address_fmt,
+        info.address,
     });
 
     var td: Tardy = try .init(init.gpa, init.io, .{

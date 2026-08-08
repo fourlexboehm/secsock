@@ -46,7 +46,7 @@ const Impl = struct {
 
         return .{
             .name = .unsecured,
-            .address_fmt = buf,
+            .address = buf,
         };
     }
 

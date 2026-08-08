@@ -79,7 +79,7 @@ const Impl = struct {
 
         return .{
             .name = .bearssl,
-            .address_fmt = buf,
+            .address = buf,
         };
     }
 

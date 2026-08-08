@@ -152,7 +152,7 @@ const Impl = struct {
 
         return .{
             .name = .@"s2n-tls",
-            .address_fmt = buf,
+            .address = buf,
         };
     }
 

@@ -41,14 +41,14 @@ pub fn send_all(tls: *Secsock, rt: *Runtime, buffer: []const u8) !usize {
     return count;
 }
 
-const Implemenation = enum {
+pub const Info = struct {
+    name: Implemenation,
+    address: [21:0]u8,
+};
+const Implemenation = enum(u8) {
     bearssl,
     @"s2n-tls",
     unsecured,
-};
-pub const Info = struct {
-    name: Implemenation,
-    address_fmt: [21:0]u8,
 };
 
 pub const VTable = struct {
