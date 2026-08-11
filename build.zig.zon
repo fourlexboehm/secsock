@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.17.0-dev.1413+addc3c3b8",
     .dependencies = .{
         .tardy = .{
-            .url = "git+https://github.com/tardy-org/tardy?ref=main#9431b2ce9af65f24cfc0c16b4da421ea309712e2",
-            .hash = "tardy-0.3.3-dev-69wrgob_BQAEu2uCKdV_zzrY7kuPVgQaHugZRb2K25gT",
+            .url = "git+https://github.com/tardy-org/tardy?ref=main#4759cc84d9bc3a8ade0d75b0bfccb9eb24624768",
+            .hash = "tardy-0.3.3-dev-69wrgmgBBgCdTSG6GgMWXDUy2Erd_QCyLL1RYxvK2E34",
         },
         .bearssl = .{
             .url = "git+https://github.com/tardy-org/bearssl-zig?ref=main#4b3e60ebe99fbf2bd1a38ebbd9e0d7369b7966ea",

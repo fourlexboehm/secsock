@@ -1,24 +1,26 @@
-const Unsecured = @This();
+const Unix = @This();
 
-pub const empty: Unsecured = .{};
+pub const empty: Unix = .{};
 
-pub fn tcp(
-    _: *const Unsecured,
+pub fn unix(
+    _: *const Unix,
     allocator: mem.Allocator,
-    config: Socket.Config,
+    path: [:0]const u8,
 ) !Secsock {
+    debug.assert(mem.endsWith(u8, path, ".sock"));
+
     const socket = try allocator.create(Socket);
-    socket.* = try .init(.{ .tcp = config });
+    socket.* = try .init(.{ .unix = path });
     errdefer allocator.destroy(socket);
     errdefer socket.close_blocking();
 
     try socket.bind();
-    try socket.listen(config.backlog);
+    try socket.listen(4096);
 
-    return try tcpWithSock(allocator, socket);
+    return try unixWithSock(allocator, socket);
 }
 
-fn tcpWithSock(
+fn unixWithSock(
     allocator: mem.Allocator,
     socket: *const Socket,
 ) !Secsock {
@@ -45,15 +47,30 @@ const Impl = struct {
         }) catch unreachable;
 
         return .{
-            .name = .unsecured,
+            .name = .unix,
             .address = buf,
         };
     }
 
     fn deinit(ct: *const anyopaque, allocator: mem.Allocator) void {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
+        debug.assert(ctx.socket.addr.family() == .unix);
+
+        var sock: *Socket = @ptrCast(@constCast(ctx.socket));
+        tardy.AsyncIO.syscall.getsockname(
+            sock.handle,
+            &sock.addr.any,
+            &sock.addr.len,
+        ) catch unreachable;
+
+        const un: *const posix.sockaddr.un = @ptrCast(&sock.addr.any);
+        std.Io.Dir.deleteFileAbsolute(
+            std.Options.debug_io,
+            mem.sliceTo(&un.path, 0x0),
+        ) catch unreachable;
 
         ctx.socket.close_blocking();
+
         allocator.destroy(ctx.socket);
         allocator.destroy(ctx);
     }
@@ -66,7 +83,7 @@ const Impl = struct {
         errdefer r.allocator.destroy(new_socket);
         errdefer new_socket.close_blocking();
 
-        const new_raw_tcp = try tcpWithSock(
+        const new_raw_tcp = try unixWithSock(
             r.allocator,
             new_socket,
         );
@@ -101,7 +118,9 @@ const vtable: Secsock.VTable = .{
 };
 
 const std = @import("std");
+const posix = std.posix;
 const mem = std.mem;
+const debug = std.debug;
 
 const tardy = @import("tardy");
 const Socket = tardy.net.Socket;

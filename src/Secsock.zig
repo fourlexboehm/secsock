@@ -42,13 +42,14 @@ pub fn send_all(tls: *Secsock, rt: *Runtime, buffer: []const u8) !usize {
 }
 
 pub const Info = struct {
-    name: Implemenation,
+    name: Implementation,
     address: [21:0]u8,
 };
-const Implemenation = enum(u8) {
+const Implementation = enum(u8) {
     bearssl,
     @"s2n-tls",
     unsecured,
+    unix,
 };
 
 pub const VTable = struct {
@@ -61,11 +62,12 @@ pub const VTable = struct {
 };
 
 pub const BearSSL = if (options.tls == .bearssl) @import("BearSSL.zig");
-
 pub const S2N = if (options.tls == .s2n_tls) @import("S2N.zig");
+pub const Unix = if (builtin.os.tag != .windows) @import("Unix.zig");
 
 const std = @import("std");
 const mem = std.mem;
+const builtin = @import("builtin");
 
 const options = @import("options");
 const tardy = @import("tardy");

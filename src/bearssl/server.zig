@@ -125,11 +125,7 @@ const Impl = struct {
         const ctx: *Impl = @ptrCast(@alignCast(ct));
         ctx.cb.runtime = r;
 
-        const result = h.br_sslio_read(
-            &ctx.sslio,
-            b.ptr,
-            b.len,
-        );
+        const result = h.br_sslio_read(&ctx.sslio, b.ptr, b.len);
 
         if (result < 0) {
             const last_error: EngineStatus = .convert(
