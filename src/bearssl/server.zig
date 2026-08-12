@@ -1,20 +1,20 @@
 pub fn to_secure_socket_server(
     bearssl: *BearSSL,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     socket: *const Socket,
 ) !Secsock {
-    const io_buf = try allocator.alloc(u8, h.BR_SSL_BUFSIZE_BIDI);
-    errdefer allocator.free(io_buf);
+    const io_buf = try gpa.alloc(u8, h.BR_SSL_BUFSIZE_BIDI);
+    errdefer gpa.free(io_buf);
 
-    const cb_ctx = try allocator.create(Callback);
-    errdefer allocator.destroy(cb_ctx);
+    const cb_ctx = try gpa.create(Callback);
+    errdefer gpa.destroy(cb_ctx);
 
     cb_ctx.* = .{ .runtime = null, .socket = socket };
 
-    const context = try allocator.create(Impl);
-    errdefer allocator.destroy(context);
+    const impl = try gpa.create(Impl);
+    errdefer gpa.destroy(impl);
 
-    context.* = .{
+    impl.* = .{
         .bearssl = bearssl,
         .server = undefined,
         .io_buf = io_buf,
@@ -24,13 +24,13 @@ pub fn to_secure_socket_server(
 
     switch (bearssl.pkey) {
         .rsa => |*rsa| h.br_ssl_server_init_full_rsa(
-            &context.server,
+            &impl.server,
             @ptrCast(&bearssl.x509),
             1,
             @ptrCast(rsa),
         ),
         .ec => |*ec| h.br_ssl_server_init_full_ec(
-            &context.server,
+            &impl.server,
             @ptrCast(&bearssl.x509),
             1,
             @intCast(bearssl.cert_signer_algo),
@@ -39,17 +39,17 @@ pub fn to_secure_socket_server(
     }
 
     h.br_ssl_engine_set_buffer(
-        &context.server.eng,
+        &impl.server.eng,
         io_buf.ptr,
         io_buf.len,
         1,
     );
-    const reset_status = h.br_ssl_server_reset(&context.server);
+    const reset_status = h.br_ssl_server_reset(&impl.server);
     if (reset_status <= 0) return error.ServerResetFailed;
 
     h.br_sslio_init(
-        &context.sslio,
-        &context.server.eng,
+        &impl.sslio,
+        &impl.server.eng,
         Callback.recv,
         cb_ctx,
         Callback.send,
@@ -57,7 +57,7 @@ pub fn to_secure_socket_server(
     );
 
     return .{
-        .ctx = context,
+        .impl = impl,
         .vtable = &vtable,
     };
 }
@@ -69,12 +69,12 @@ const Impl = struct {
     cb: *Callback,
     server: h.br_ssl_server_context,
 
-    fn info(ct: *const anyopaque) Secsock.Info {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+    fn info(i: *const anyopaque) Secsock.Info {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
 
         var buf: [21:0]u8 = @splat(0x0);
         _ = mem.print(&buf, "{f}", .{
-            ctx.cb.socket.addr,
+            impl.cb.socket.addr,
         }) catch unreachable;
 
         return .{
@@ -83,53 +83,53 @@ const Impl = struct {
         };
     }
 
-    fn deinit(ct: *const anyopaque, alloc: mem.Allocator) void {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+    fn deinit(i: *const anyopaque, gpa: mem.Allocator) void {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
 
-        ctx.cb.socket.close_blocking();
-        alloc.destroy(ctx.cb.socket);
+        impl.cb.socket.close_blocking();
+        gpa.destroy(impl.cb.socket);
 
-        alloc.destroy(ctx.cb);
-        alloc.free(ctx.io_buf);
-        alloc.destroy(ctx);
+        gpa.destroy(impl.cb);
+        gpa.free(impl.io_buf);
+        gpa.destroy(impl);
     }
 
-    fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        const cb = ctx.cb;
+    fn accept(i: *const anyopaque, r: *Runtime) !Secsock {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
+        const cb = impl.cb;
 
-        const sock = r.allocator.create(Socket) catch @panic("OOM");
-        sock.* = try cb.socket.accept(r);
-        errdefer r.allocator.destroy(sock);
-        errdefer sock.close_blocking();
+        const client = r.gpa.create(Socket) catch @panic("OOM");
+        client.* = try cb.socket.accept(r);
+        errdefer r.gpa.destroy(client);
+        errdefer client.close_blocking();
 
-        const new_tls = try ctx.bearssl.tlsWithSock(
-            r.allocator,
-            sock,
+        const new_bearssl = try impl.bearssl.tlsWithSock(
+            r.gpa,
+            client,
             .server,
         );
         // if we fail, we want to clean this connection up.
-        errdefer new_tls.deinit(r.allocator);
+        errdefer new_bearssl.deinit(r.gpa);
 
-        const new_ctx: *const Impl = @ptrCast(@alignCast(new_tls.ctx));
-        new_ctx.cb.runtime = r;
+        const new_impl: *const Impl = @ptrCast(@alignCast(new_bearssl.impl));
+        new_impl.cb.runtime = r;
 
-        return new_tls;
+        return new_bearssl;
     }
 
     fn connect(_: *const anyopaque, _: *Runtime) !void {
         return error.TLSServerCantConnect;
     }
 
-    fn recv(ct: *anyopaque, r: *Runtime, b: []u8) !usize {
-        const ctx: *Impl = @ptrCast(@alignCast(ct));
-        ctx.cb.runtime = r;
+    fn recv(i: *anyopaque, r: *Runtime, b: []u8) !usize {
+        const impl: *Impl = @ptrCast(@alignCast(i));
+        impl.cb.runtime = r;
 
-        const result = h.br_sslio_read(&ctx.sslio, b.ptr, b.len);
+        const result = h.br_sslio_read(&impl.sslio, b.ptr, b.len);
 
         if (result < 0) {
             const last_error: EngineStatus = .convert(
-                h.br_ssl_engine_last_error(&ctx.server.eng),
+                h.br_ssl_engine_last_error(&impl.server.eng),
             );
             switch (last_error) {
                 .InputOutput => return error.Closed,
@@ -145,18 +145,18 @@ const Impl = struct {
         return @intCast(result);
     }
 
-    fn send(ct: *anyopaque, r: *Runtime, b: []const u8) !usize {
-        const ctx: *Impl = @ptrCast(@alignCast(ct));
-        ctx.cb.runtime = r;
+    fn send(i: *anyopaque, r: *Runtime, b: []const u8) !usize {
+        const impl: *Impl = @ptrCast(@alignCast(i));
+        impl.cb.runtime = r;
 
         const write_result = h.br_sslio_write(
-            &ctx.sslio,
+            &impl.sslio,
             b.ptr,
             b.len,
         );
         if (write_result < 0) {
             const last_error: EngineStatus = .convert(
-                h.br_ssl_engine_last_error(&ctx.server.eng),
+                h.br_ssl_engine_last_error(&impl.server.eng),
             );
             switch (last_error) {
                 .InputOutput => return error.Closed,
@@ -168,10 +168,10 @@ const Impl = struct {
         }
 
         // Force flush. We should be buffering a layer above this.
-        const flush_result = h.br_sslio_flush(&ctx.sslio);
+        const flush_result = h.br_sslio_flush(&impl.sslio);
         if (flush_result < 0) {
             const last_error: EngineStatus = .convert(
-                h.br_ssl_engine_last_error(&ctx.server.eng),
+                h.br_ssl_engine_last_error(&impl.server.eng),
             );
             switch (last_error) {
                 .InputOutput => return error.Closed,
@@ -192,10 +192,10 @@ const Callback = struct {
     socket: *const Socket,
     runtime: ?*Runtime,
 
-    fn recv(cb: ?*anyopaque, buf: [*c]u8, len: usize) callconv(.c) c_int {
-        const ctx: *Callback = @ptrCast(@alignCast(cb.?));
-        const count = ctx.socket.recv(
-            ctx.runtime.?,
+    fn recv(c: ?*anyopaque, buf: [*c]u8, len: usize) callconv(.c) c_int {
+        const cb: *Callback = @ptrCast(@alignCast(c.?));
+        const count = cb.socket.recv(
+            cb.runtime.?,
             buf[0..len],
         ) catch |e| {
             log.err("sslio recv cb failed: {t}", .{e});
@@ -204,10 +204,10 @@ const Callback = struct {
         return @intCast(count);
     }
 
-    fn send(cb: ?*anyopaque, buf: [*c]const u8, len: usize) callconv(.c) c_int {
-        const ctx: *Callback = @ptrCast(@alignCast(cb.?));
-        const count = ctx.socket.send(
-            ctx.runtime.?,
+    fn send(c: ?*anyopaque, buf: [*c]const u8, len: usize) callconv(.c) c_int {
+        const cb: *Callback = @ptrCast(@alignCast(c.?));
+        const count = cb.socket.send(
+            cb.runtime.?,
             buf[0..len],
         ) catch |e| {
             log.err("sslio send cb failed: {t}", .{e});

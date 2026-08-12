@@ -4,31 +4,31 @@ pub const empty: Unsecured = .{};
 
 pub fn tcp(
     _: *const Unsecured,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     config: Socket.Config,
 ) !Secsock {
-    const socket = try allocator.create(Socket);
+    const socket = try gpa.create(Socket);
     socket.* = try .init(.{ .tcp = config });
-    errdefer allocator.destroy(socket);
+    errdefer gpa.destroy(socket);
     errdefer socket.close_blocking();
 
     try socket.bind();
     try socket.listen(config.backlog);
 
-    return try tcpWithSock(allocator, socket);
+    return try tcpWithSock(gpa, socket);
 }
 
 fn tcpWithSock(
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     socket: *const Socket,
 ) !Secsock {
-    const context = try allocator.create(Impl);
-    errdefer allocator.destroy(context);
+    const impl = try gpa.create(Impl);
+    errdefer gpa.destroy(impl);
 
-    context.* = .{ .socket = socket };
+    impl.* = .{ .socket = socket };
 
     return .{
-        .ctx = context,
+        .impl = impl,
         .vtable = &vtable,
     };
 }
@@ -37,11 +37,11 @@ const Impl = struct {
     socket: *const Socket,
 
     fn info(ct: *const anyopaque) Secsock.Info {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
 
         var buf: [21:0]u8 = @splat(0x0);
         _ = mem.print(&buf, "{f}", .{
-            ctx.socket.addr,
+            impl.socket.addr,
         }) catch unreachable;
 
         return .{
@@ -50,44 +50,41 @@ const Impl = struct {
         };
     }
 
-    fn deinit(ct: *const anyopaque, allocator: mem.Allocator) void {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+    fn deinit(ct: *const anyopaque, gpa: mem.Allocator) void {
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
 
-        ctx.socket.close_blocking();
-        allocator.destroy(ctx.socket);
-        allocator.destroy(ctx);
+        impl.socket.close_blocking();
+        gpa.destroy(impl.socket);
+        gpa.destroy(impl);
     }
 
     fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
 
-        const new_socket = try r.allocator.create(Socket);
-        new_socket.* = try ctx.socket.accept(r);
-        errdefer r.allocator.destroy(new_socket);
-        errdefer new_socket.close_blocking();
+        const client = try r.gpa.create(Socket);
+        client.* = try impl.socket.accept(r);
+        errdefer r.gpa.destroy(client);
+        errdefer client.close_blocking();
 
-        const new_raw_tcp = try tcpWithSock(
-            r.allocator,
-            new_socket,
-        );
-        errdefer new_raw_tcp.deinit(r.allocator);
+        const new_tcp = try tcpWithSock(r.gpa, client);
+        errdefer new_tcp.deinit(r.gpa);
 
-        return new_raw_tcp;
+        return new_tcp;
     }
 
     fn connect(ct: *const anyopaque, r: *Runtime) !void {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        try ctx.socket.connect(r);
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        try impl.socket.connect(r);
     }
 
     fn recv(ct: *const anyopaque, r: *Runtime, buf: []u8) !usize {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        return try ctx.socket.recv(r, buf);
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        return try impl.socket.recv(r, buf);
     }
 
     fn send(ct: *const anyopaque, r: *Runtime, buf: []const u8) !usize {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        return try ctx.socket.send(r, buf);
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        return try impl.socket.send(r, buf);
     }
 };
 

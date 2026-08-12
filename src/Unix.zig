@@ -43,11 +43,11 @@ const Impl = struct {
     socket: *const Socket,
 
     fn info(ct: *const anyopaque) Secsock.Info {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
 
         var buf: [21:0]u8 = @splat(0x0);
         _ = mem.print(&buf, "{f}", .{
-            ctx.socket.addr,
+            impl.socket.addr,
         }) catch unreachable;
 
         return .{
@@ -57,20 +57,20 @@ const Impl = struct {
     }
 
     fn deinit(ct: *const anyopaque, gpa: mem.Allocator) void {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        debug.assert(ctx.socket.addr.family() == .unix);
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        debug.assert(impl.socket.addr.family() == .unix);
 
-        ctx.socket.close_blocking();
+        impl.socket.close_blocking();
 
-        gpa.destroy(ctx.socket);
-        gpa.destroy(ctx);
+        gpa.destroy(impl.socket);
+        gpa.destroy(impl);
     }
 
     fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
 
         const client = try r.gpa.create(Socket);
-        client.* = try ctx.socket.accept(r);
+        client.* = try impl.socket.accept(r);
         errdefer r.gpa.destroy(client);
         errdefer client.close_blocking();
 
@@ -81,18 +81,18 @@ const Impl = struct {
     }
 
     fn connect(ct: *const anyopaque, r: *Runtime) !void {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        try ctx.socket.connect(r);
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        try impl.socket.connect(r);
     }
 
     fn recv(ct: *const anyopaque, r: *Runtime, buf: []u8) !usize {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        return try ctx.socket.recv(r, buf);
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        return try impl.socket.recv(r, buf);
     }
 
     fn send(ct: *const anyopaque, r: *Runtime, buf: []const u8) !usize {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        return try ctx.socket.send(r, buf);
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        return try impl.socket.send(r, buf);
     }
 };
 

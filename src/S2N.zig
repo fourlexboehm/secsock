@@ -43,12 +43,12 @@ fn addCertChain(s2n: *S2N, cert: []const u8, key: []const u8) !void {
 
 fn tlsWithSock(
     s2n: *S2N,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     socket: *const Socket,
     mode: Socket.Mode,
 ) !Secsock {
-    const cb_ctx = try allocator.create(Callback);
-    errdefer allocator.destroy(cb_ctx);
+    const cb_ctx = try gpa.create(Callback);
+    errdefer gpa.destroy(cb_ctx);
 
     cb_ctx.* = .{ .socket = socket, .runtime = null };
 
@@ -66,40 +66,40 @@ fn tlsWithSock(
     const set_send_cb_rc = h.s2n_connection_set_send_cb(conn, Callback.send);
     try handle_error("setting send cb", set_send_cb_rc);
 
-    const context = try allocator.create(Impl);
-    errdefer allocator.destroy(context);
+    const impl = try gpa.create(Impl);
+    errdefer gpa.destroy(impl);
 
-    context.* = .{
+    impl.* = .{
         .s2n = s2n,
         .conn = conn,
         .cb = cb_ctx,
     };
 
     return .{
-        .ctx = context,
+        .impl = impl,
         .vtable = &vtable,
     };
 }
 
 pub fn tls(
     s2n: *S2N,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     config: Socket.Config,
 ) !Secsock {
-    const socket = try allocator.create(Socket);
+    const socket = try gpa.create(Socket);
     socket.* = try .init(.{ .tcp = config });
-    errdefer allocator.destroy(socket);
+    errdefer gpa.destroy(socket);
     errdefer socket.close_blocking();
 
     try socket.bind();
     try socket.listen(config.backlog);
 
     const secsock = try s2n.tlsWithSock(
-        allocator,
+        gpa,
         socket,
         config.mode,
     );
-    errdefer secsock.deinit(allocator);
+    errdefer secsock.deinit(gpa);
 
     return secsock;
 }
@@ -142,12 +142,12 @@ const Impl = struct {
     conn: *h.s2n_connection,
     cb: *Callback,
 
-    fn info(ct: *const anyopaque) Secsock.Info {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+    fn info(i: *const anyopaque) Secsock.Info {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
 
         var buf: [21:0]u8 = @splat(0x0);
         _ = mem.print(&buf, "{f}", .{
-            ctx.cb.socket.addr,
+            impl.cb.socket.addr,
         }) catch unreachable;
 
         return .{
@@ -156,39 +156,39 @@ const Impl = struct {
         };
     }
 
-    fn deinit(ct: *const anyopaque, allocator: mem.Allocator) void {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
+    fn deinit(i: *const anyopaque, gpa: mem.Allocator) void {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
 
         var blocked_status: h.s2n_blocked_status = undefined;
-        _ = h.s2n_shutdown(ctx.conn, &blocked_status);
-        _ = h.s2n_connection_free(ctx.conn);
+        _ = h.s2n_shutdown(impl.conn, &blocked_status);
+        _ = h.s2n_connection_free(impl.conn);
 
-        ctx.cb.socket.close_blocking();
-        allocator.destroy(ctx.cb.socket);
-        allocator.destroy(ctx.cb);
-        allocator.destroy(ctx);
+        impl.cb.socket.close_blocking();
+        gpa.destroy(impl.cb.socket);
+        gpa.destroy(impl.cb);
+        gpa.destroy(impl);
     }
 
-    fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        ctx.cb.runtime = r;
+    fn accept(i: *const anyopaque, r: *Runtime) !Secsock {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
+        impl.cb.runtime = r;
 
-        const sock = try ctx.cb.socket.accept(r);
-        errdefer sock.close_blocking();
+        const client = try impl.cb.socket.accept(r);
+        errdefer client.close_blocking();
 
-        const new_tls = try ctx.s2n.tlsWithSock(
-            r.allocator,
-            &sock,
+        const new_s2n = try impl.s2n.tlsWithSock(
+            r.gpa,
+            &client,
             .server,
         );
         // if we fail, we want to clean this connection up.
-        errdefer new_tls.deinit(r.allocator);
+        errdefer new_s2n.deinit(r.gpa);
 
-        const new_ctx: *Impl = @ptrCast(@alignCast(new_tls.ctx));
-        new_ctx.cb.runtime = r;
+        const new_impl: *Impl = @ptrCast(@alignCast(new_s2n.impl));
+        new_impl.cb.runtime = r;
 
         var blocked_status: h.s2n_blocked_status = h.S2N_NOT_BLOCKED;
-        while (h.s2n_negotiate(new_ctx.conn, &blocked_status) != h.S2N_SUCCESS) {
+        while (h.s2n_negotiate(new_impl.conn, &blocked_status) != h.S2N_SUCCESS) {
             switch (h.s2n_error_get_type(h.s2n_errno)) {
                 h.S2N_ERR_T_BLOCKED => continue,
                 h.S2N_ERR_T_CLOSED => return error.Closed,
@@ -199,16 +199,16 @@ const Impl = struct {
             }
         }
 
-        return new_tls;
+        return new_s2n;
     }
 
-    fn connect(ct: *const anyopaque, r: *Runtime) !void {
-        const ctx: *const Impl = @ptrCast(@alignCast(ct));
-        ctx.cb.runtime = r;
-        try ctx.cb.socket.connect(r);
+    fn connect(i: *const anyopaque, r: *Runtime) !void {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
+        impl.cb.runtime = r;
+        try impl.cb.socket.connect(r);
 
         var blocked_status: h.s2n_blocked_status = h.S2N_NOT_BLOCKED;
-        while (h.s2n_negotiate(ctx.conn, &blocked_status) != h.S2N_SUCCESS) {
+        while (h.s2n_negotiate(impl.conn, &blocked_status) != h.S2N_SUCCESS) {
             switch (h.s2n_error_get_type(h.s2n_errno)) {
                 h.S2N_ERR_T_BLOCKED => continue,
                 h.S2N_ERR_T_CLOSED => return error.Closed,
@@ -220,12 +220,12 @@ const Impl = struct {
         }
     }
 
-    fn recv(ct: *anyopaque, r: *Runtime, buf: []u8) !usize {
-        const ctx: *Impl = @ptrCast(@alignCast(ct));
-        ctx.cb.runtime = r;
+    fn recv(i: *anyopaque, r: *Runtime, buf: []u8) !usize {
+        const impl: *Impl = @ptrCast(@alignCast(i));
+        impl.cb.runtime = r;
         var blocked_status: h.s2n_blocked_status = undefined;
 
-        const res = h.s2n_recv(ctx.conn, buf.ptr, @intCast(buf.len), &blocked_status);
+        const res = h.s2n_recv(impl.conn, buf.ptr, @intCast(buf.len), &blocked_status);
 
         if (res < 0) switch (h.s2n_error_get_type(h.s2n_errno)) {
             h.S2N_ERR_T_CLOSED => return error.Closed,
@@ -235,12 +235,12 @@ const Impl = struct {
         return @intCast(res);
     }
 
-    fn send(ct: *anyopaque, r: *Runtime, buf: []const u8) !usize {
-        const ctx: *Impl = @ptrCast(@alignCast(ct));
-        ctx.cb.runtime = r;
+    fn send(i: *anyopaque, r: *Runtime, buf: []const u8) !usize {
+        const impl: *Impl = @ptrCast(@alignCast(i));
+        impl.cb.runtime = r;
         var blocked_status: h.s2n_blocked_status = undefined;
 
-        const res = h.s2n_send(ctx.conn, buf.ptr, @intCast(buf.len), &blocked_status);
+        const res = h.s2n_send(impl.conn, buf.ptr, @intCast(buf.len), &blocked_status);
 
         if (res < 0) switch (h.s2n_error_get_type(h.s2n_errno)) {
             h.S2N_ERR_T_CLOSED => return error.Closed,
@@ -255,10 +255,10 @@ const Callback = struct {
     socket: *const Socket,
     runtime: ?*Runtime,
 
-    fn recv(cb: ?*anyopaque, buf: [*c]u8, len: u32) callconv(.c) c_int {
-        const ctx: *Callback = @ptrCast(@alignCast(cb.?));
-        const sock = ctx.socket;
-        const runtime = ctx.runtime;
+    fn recv(c: ?*anyopaque, buf: [*c]u8, len: u32) callconv(.c) c_int {
+        const cb: *Callback = @ptrCast(@alignCast(c.?));
+        const sock = cb.socket;
+        const runtime = cb.runtime;
 
         const result = sock.recv(runtime.?, buf[0..len]) catch |e|
             switch (e) {
@@ -273,10 +273,10 @@ const Callback = struct {
         return @intCast(result);
     }
 
-    fn send(cb: ?*anyopaque, buf: [*c]const u8, len: u32) callconv(.c) c_int {
-        const ctx: *Callback = @ptrCast(@alignCast(cb.?));
-        const sock = ctx.socket;
-        const runtime = ctx.runtime;
+    fn send(c: ?*anyopaque, buf: [*c]const u8, len: u32) callconv(.c) c_int {
+        const cb: *Callback = @ptrCast(@alignCast(c.?));
+        const sock = cb.socket;
+        const runtime = cb.runtime;
 
         const result = sock.send(runtime.?, buf[0..len]) catch |e|
             switch (e) {
