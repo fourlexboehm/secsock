@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const TlsImpl = enum {
     bearssl,
@@ -83,7 +84,9 @@ pub fn build(b: *std.Build) void {
         },
     }
     add_example(b, "unsecured", options);
-    add_example(b, "unix", options);
+
+    if (builtin.target.os.tag != .windows)
+        add_example(b, "unix", options);
 }
 
 fn add_example(b: *std.Build, name: []const u8, options: Options) void {

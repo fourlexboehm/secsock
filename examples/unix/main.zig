@@ -5,6 +5,8 @@ pub fn main(init: std.process.Init) !void {
     const unix_path = "/tmp/zzz.sock";
 
     const unsecured: Secsock.Unix = .empty;
+    defer unsecured.deinit(init.io, unix_path);
+
     const unix: Secsock = try unsecured.unix(
         init.gpa,
         unix_path,
@@ -32,7 +34,7 @@ pub fn main(init: std.process.Init) !void {
 
 fn echo_frame(rt: *tardy.Runtime, tcp: *const Secsock) !void {
     var connected = try tcp.accept(rt);
-    defer connected.deinit(rt.allocator);
+    defer connected.deinit(rt.gpa);
 
     while (true) {
         var buf: [1024]u8 = undefined;

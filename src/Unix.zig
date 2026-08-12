@@ -2,35 +2,39 @@ const Unix = @This();
 
 pub const empty: Unix = .{};
 
+pub fn deinit(_: Unix, io: Io, path: []const u8) void {
+    Io.Dir.deleteFileAbsolute(io, path) catch unreachable;
+}
+
 pub fn unix(
     _: *const Unix,
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     path: [:0]const u8,
 ) !Secsock {
     debug.assert(mem.endsWith(u8, path, ".sock"));
 
-    const socket = try allocator.create(Socket);
+    const socket = try gpa.create(Socket);
     socket.* = try .init(.{ .unix = path });
-    errdefer allocator.destroy(socket);
+    errdefer gpa.destroy(socket);
     errdefer socket.close_blocking();
 
     try socket.bind();
     try socket.listen(4096);
 
-    return try unixWithSock(allocator, socket);
+    return try unixWithSock(gpa, socket);
 }
 
 fn unixWithSock(
-    allocator: mem.Allocator,
+    gpa: mem.Allocator,
     socket: *const Socket,
 ) !Secsock {
-    const context = try allocator.create(Impl);
-    errdefer allocator.destroy(context);
+    const impl = try gpa.create(Impl);
+    errdefer gpa.destroy(impl);
 
-    context.* = .{ .socket = socket };
+    impl.* = .{ .socket = socket };
 
     return .{
-        .ctx = context,
+        .impl = impl,
         .vtable = &vtable,
     };
 }
@@ -52,44 +56,28 @@ const Impl = struct {
         };
     }
 
-    fn deinit(ct: *const anyopaque, allocator: mem.Allocator) void {
+    fn deinit(ct: *const anyopaque, gpa: mem.Allocator) void {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
         debug.assert(ctx.socket.addr.family() == .unix);
 
-        var sock: *Socket = @ptrCast(@constCast(ctx.socket));
-        tardy.AsyncIO.syscall.getsockname(
-            sock.handle,
-            &sock.addr.any,
-            &sock.addr.len,
-        ) catch unreachable;
-
-        const un: *const posix.sockaddr.un = @ptrCast(&sock.addr.any);
-        std.Io.Dir.deleteFileAbsolute(
-            std.Options.debug_io,
-            mem.sliceTo(&un.path, 0x0),
-        ) catch unreachable;
-
         ctx.socket.close_blocking();
 
-        allocator.destroy(ctx.socket);
-        allocator.destroy(ctx);
+        gpa.destroy(ctx.socket);
+        gpa.destroy(ctx);
     }
 
     fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
         const ctx: *const Impl = @ptrCast(@alignCast(ct));
 
-        const new_socket = try r.allocator.create(Socket);
-        new_socket.* = try ctx.socket.accept(r);
-        errdefer r.allocator.destroy(new_socket);
-        errdefer new_socket.close_blocking();
+        const client = try r.gpa.create(Socket);
+        client.* = try ctx.socket.accept(r);
+        errdefer r.gpa.destroy(client);
+        errdefer client.close_blocking();
 
-        const new_raw_tcp = try unixWithSock(
-            r.allocator,
-            new_socket,
-        );
-        errdefer new_raw_tcp.deinit(r.allocator);
+        const new_unix = try unixWithSock(r.gpa, client);
+        errdefer new_unix.deinit(r.gpa);
 
-        return new_raw_tcp;
+        return new_unix;
     }
 
     fn connect(ct: *const anyopaque, r: *Runtime) !void {
@@ -118,6 +106,7 @@ const vtable: Secsock.VTable = .{
 };
 
 const std = @import("std");
+const Io = std.Io;
 const posix = std.posix;
 const mem = std.mem;
 const debug = std.debug;
