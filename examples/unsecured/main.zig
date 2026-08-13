@@ -2,18 +2,13 @@ const Tardy = tardy.Tardy(.auto);
 
 /// curl -vk https://127.0.0.1:9862
 pub fn main(init: std.process.Init) !void {
-    const unsecured: Secsock.Unsecured = .empty;
+    const unsecured: Secsock = try .init(init.gpa, .{ .tcp = .{ .raw = .{
+        .host = "127.0.0.1",
+        .port = 9862,
+    } } });
+    defer unsecured.deinit(init.gpa);
 
-    const tcp: Secsock = try unsecured.tcp(
-        init.gpa,
-        .{
-            .host = "127.0.0.1",
-            .port = 9862,
-        },
-    );
-    defer tcp.deinit(init.gpa);
-
-    const info = tcp.info();
+    const info = unsecured.info();
     log.info("tls: '{t}', address: ({s})", .{
         info.name,
         info.address,
@@ -24,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
     });
     defer td.deinit();
 
-    try td.entry(&tcp, struct {
+    try td.entry(&unsecured, struct {
         fn entry(rt: *tardy.Runtime, raw_tcp: *const Secsock) !void {
             try rt.spawn(
                 echo_frame,
@@ -55,5 +50,5 @@ const log = std.log.scoped(.@"examples/unsecured");
 
 const std = @import("std");
 
-const Secsock = @import("secsock");
+const Secsock = @import("secsock").Secsock;
 const tardy = @import("tardy");

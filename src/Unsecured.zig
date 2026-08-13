@@ -1,12 +1,11 @@
 const Unsecured = @This();
 
-pub const empty: Unsecured = .{};
+socket: *const Socket,
 
-pub fn tcp(
-    _: *const Unsecured,
+pub fn init(
     gpa: mem.Allocator,
     config: Socket.Config,
-) !Secsock {
+) !secsock.Secsock {
     const socket = try gpa.create(Socket);
     socket.* = try .init(.{ .tcp = config });
     errdefer gpa.destroy(socket);
@@ -18,84 +17,61 @@ pub fn tcp(
     return try tcpWithSock(gpa, socket);
 }
 
+pub fn deinit(unsecured: *const Unsecured, gpa: mem.Allocator) void {
+    unsecured.socket.close_blocking();
+    gpa.destroy(unsecured.socket);
+    gpa.destroy(unsecured);
+}
+
 fn tcpWithSock(
     gpa: mem.Allocator,
     socket: *const Socket,
-) !Secsock {
-    const impl = try gpa.create(Impl);
-    errdefer gpa.destroy(impl);
+) !secsock.Secsock {
+    const unsecured = try gpa.create(Unsecured);
+    errdefer gpa.destroy(unsecured);
 
-    impl.* = .{ .socket = socket };
+    unsecured.* = .{ .socket = socket };
 
     return .{
-        .impl = impl,
-        .vtable = &vtable,
+        .tcp = .{ .raw = unsecured },
     };
 }
 
-const Impl = struct {
-    socket: *const Socket,
+pub fn info(unsecured: *const Unsecured) secsock.Info {
+    var buf: [21:0]u8 = @splat(0x0);
+    _ = mem.print(&buf, "{f}", .{
+        unsecured.socket.addr,
+    }) catch unreachable;
 
-    fn info(ct: *const anyopaque) Secsock.Info {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
+    return .{
+        .name = .unsecured,
+        .address = buf,
+    };
+}
 
-        var buf: [21:0]u8 = @splat(0x0);
-        _ = mem.print(&buf, "{f}", .{
-            impl.socket.addr,
-        }) catch unreachable;
+pub fn accept(unsecured: *const Unsecured, r: *Runtime) !secsock.Secsock {
+    const client = try r.gpa.create(Socket);
+    client.* = try unsecured.socket.accept(r);
+    errdefer r.gpa.destroy(client);
+    errdefer client.close_blocking();
 
-        return .{
-            .name = .unsecured,
-            .address = buf,
-        };
-    }
+    const new_tcp = try tcpWithSock(r.gpa, client);
+    errdefer new_tcp.deinit(r.gpa);
 
-    fn deinit(ct: *const anyopaque, gpa: mem.Allocator) void {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
+    return new_tcp;
+}
 
-        impl.socket.close_blocking();
-        gpa.destroy(impl.socket);
-        gpa.destroy(impl);
-    }
+pub fn connect(unsecured: *const Unsecured, r: *Runtime) !void {
+    try unsecured.socket.connect(r);
+}
 
-    fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
+pub fn recv(unsecured: *const Unsecured, r: *Runtime, buf: []u8) !usize {
+    return try unsecured.socket.recv(r, buf);
+}
 
-        const client = try r.gpa.create(Socket);
-        client.* = try impl.socket.accept(r);
-        errdefer r.gpa.destroy(client);
-        errdefer client.close_blocking();
-
-        const new_tcp = try tcpWithSock(r.gpa, client);
-        errdefer new_tcp.deinit(r.gpa);
-
-        return new_tcp;
-    }
-
-    fn connect(ct: *const anyopaque, r: *Runtime) !void {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
-        try impl.socket.connect(r);
-    }
-
-    fn recv(ct: *const anyopaque, r: *Runtime, buf: []u8) !usize {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
-        return try impl.socket.recv(r, buf);
-    }
-
-    fn send(ct: *const anyopaque, r: *Runtime, buf: []const u8) !usize {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
-        return try impl.socket.send(r, buf);
-    }
-};
-
-const vtable: Secsock.VTable = .{
-    .info = Impl.info,
-    .deinit = Impl.deinit,
-    .accept = Impl.accept,
-    .connect = Impl.connect,
-    .recv = Impl.recv,
-    .send = Impl.send,
-};
+pub fn send(unsecured: *const Unsecured, r: *Runtime, buf: []const u8) !usize {
+    return try unsecured.socket.send(r, buf);
+}
 
 const std = @import("std");
 const mem = std.mem;
@@ -104,4 +80,4 @@ const tardy = @import("tardy");
 const Socket = tardy.net.Socket;
 const Runtime = tardy.Runtime;
 
-const Secsock = @import("Secsock.zig");
+const secsock = @import("secsock.zig");
