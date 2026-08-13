@@ -4,27 +4,43 @@ x509: h.br_x509_certificate,
 pkey: PrivateKey,
 cert_signer_algo: c_int,
 
-pub fn init(
-    gpa: mem.Allocator,
-    cert_section_title: ?[]const u8,
-    cert: []const u8,
-    key_section_title: ?[]const u8,
-    key: []const u8,
-) !BearSSL {
-    var bearssl: BearSSL = undefined;
+io_buf: []const u8 = undefined,
+sslio: h.br_sslio_context = undefined,
+cb: *Callback = undefined,
+server: h.br_ssl_server_context = undefined,
 
-    try bearssl.add_cert_chain(
+pub fn init(gpa: mem.Allocator, config: Init) !Secsock {
+    const socket = gpa.create(Socket) catch @panic("OOM");
+    socket.* = try .init(.{ .tcp = config.socket });
+    errdefer gpa.destroy(socket);
+    errdefer socket.close_blocking();
+
+    try socket.bind();
+    try socket.listen(config.socket.backlog);
+
+    var bearssl = try tlsInit(gpa, config);
+    errdefer bearssl.deinit(gpa);
+
+    const new = try bearssl.tlsWithSock(
         gpa,
-        cert_section_title,
-        cert,
-        key_section_title,
-        key,
+        socket,
+        config.socket.mode,
     );
+    errdefer new.deinit(gpa);
 
-    return bearssl;
+    return new;
 }
 
-pub fn deinit(bearssl: BearSSL, gpa: mem.Allocator) void {
+pub fn deinit(bearssl: *const BearSSL, gpa: mem.Allocator) void {
+    bearssl.cb.socket.close_blocking();
+    gpa.destroy(bearssl.cb.socket);
+
+    gpa.destroy(bearssl.cb);
+    gpa.free(bearssl.io_buf);
+    gpa.destroy(bearssl);
+}
+
+pub fn free(bearssl: BearSSL, gpa: mem.Allocator) void {
     gpa.free(bearssl.x509.data[0..bearssl.x509.data_len]);
 
     switch (bearssl.pkey) {
@@ -39,6 +55,126 @@ pub fn deinit(bearssl: BearSSL, gpa: mem.Allocator) void {
             gpa.free(ec.x[0..ec.xlen]);
         },
     }
+}
+
+pub fn info(bearssl: *const BearSSL) secsock.Info {
+    var buf: [21:0]u8 = @splat(0x0);
+    _ = mem.print(&buf, "{f}", .{
+        bearssl.cb.socket.addr,
+    }) catch unreachable;
+
+    return .{
+        .name = .bearssl,
+        .address = buf,
+    };
+}
+
+pub fn accept(bearssl: *const BearSSL, r: *Runtime) !secsock.Secsock {
+    const cb = bearssl.cb;
+
+    const client = try r.gpa.create(Socket);
+    errdefer r.gpa.destroy(client);
+
+    client.* = try cb.socket.accept(r);
+    errdefer client.close_blocking();
+
+    const new: *BearSSL = @ptrCast(try r.gpa.dupe(BearSSL, &.{bearssl.*}));
+    errdefer r.gpa.destroy(new);
+
+    // TODO: is it valid to use previous or reset (REMOVE BEFORE COMMIT)
+    new.cb.runtime = r;
+
+    const new_bearssl = try new.tlsWithSock(
+        r.gpa,
+        client,
+        .server,
+    );
+    // if we fail, we want to clean this connection up.
+    errdefer new_bearssl.deinit(r.gpa);
+
+    return new_bearssl;
+}
+
+pub fn connect(_: *const BearSSL, _: *Runtime) !void {
+    return error.TLSServerCantConnect;
+}
+
+pub fn recv(bearssl: *BearSSL, r: *Runtime, b: []u8) !usize {
+    bearssl.cb.runtime = r;
+
+    const result = h.br_sslio_read(&bearssl.sslio, b.ptr, b.len);
+
+    if (result < 0) {
+        const last_error: EngineStatus = .convert(
+            h.br_ssl_engine_last_error(&bearssl.server.eng),
+        );
+        switch (last_error) {
+            .InputOutput => return error.Closed,
+            else => {
+                log.err("sslio recv failed: {t}", .{
+                    last_error,
+                });
+                return error.TlsRecvFailed;
+            },
+        }
+    }
+
+    return @intCast(result);
+}
+
+pub fn send(bearssl: *BearSSL, r: *Runtime, b: []const u8) !usize {
+    bearssl.cb.runtime = r;
+
+    const write_result = h.br_sslio_write(
+        &bearssl.sslio,
+        b.ptr,
+        b.len,
+    );
+    if (write_result < 0) {
+        const last_error: EngineStatus = .convert(
+            h.br_ssl_engine_last_error(&bearssl.server.eng),
+        );
+        switch (last_error) {
+            .InputOutput => return error.Closed,
+            else => {
+                log.err("sslio send failed: {t}", .{last_error});
+                return error.TlsSendFailed;
+            },
+        }
+    }
+
+    // Force flush. We should be buffering a layer above this.
+    const flush_result = h.br_sslio_flush(&bearssl.sslio);
+    if (flush_result < 0) {
+        const last_error: EngineStatus = .convert(
+            h.br_ssl_engine_last_error(&bearssl.server.eng),
+        );
+        switch (last_error) {
+            .InputOutput => return error.Closed,
+            else => {
+                log.err("sslio flush failed: {t}", .{
+                    last_error,
+                });
+                return error.TlsSendFailed;
+            },
+        }
+    }
+
+    return @intCast(write_result);
+}
+
+fn tlsInit(gpa: mem.Allocator, config: Init) !*BearSSL {
+    var bearssl = try gpa.create(BearSSL);
+
+    try bearssl.add_cert_chain(
+        gpa,
+        config.cert_section_title,
+        config.cert,
+        config.key_section_title,
+        config.key,
+    );
+
+    return bearssl;
 }
 
 fn add_cert_chain(
@@ -230,7 +366,7 @@ pub fn tlsWithSock(
     switch (mode) {
         .client => @panic("Client bearssl not supported yet!"),
         .server => {
-            return server.to_secure_socket_server(
+            return server_tls(
                 bearssl,
                 gpa,
                 socket,
@@ -239,24 +375,89 @@ pub fn tlsWithSock(
     }
 }
 
-pub fn tls(bearssl: *BearSSL, gpa: mem.Allocator, config: Socket.Config) !Secsock {
-    const socket = gpa.create(Socket) catch @panic("OOM");
-    socket.* = try .init(.{ .tcp = config });
-    errdefer gpa.destroy(socket);
-    errdefer socket.close_blocking();
+fn server_tls(
+    bearssl: *BearSSL,
+    gpa: mem.Allocator,
+    socket: *const Socket,
+) !secsock.Secsock {
+    const io_buf = try gpa.alloc(u8, h.BR_SSL_BUFSIZE_BIDI);
+    errdefer gpa.free(io_buf);
 
-    try socket.bind();
-    try socket.listen(config.backlog);
+    const cb_ctx = try gpa.create(Callback);
+    errdefer gpa.destroy(cb_ctx);
 
-    const secsock = try bearssl.tlsWithSock(
-        gpa,
-        socket,
-        config.mode,
+    cb_ctx.* = .{ .runtime = null, .socket = socket };
+
+    bearssl.cb = cb_ctx;
+    bearssl.io_buf = io_buf;
+
+    switch (bearssl.pkey) {
+        .rsa => |*rsa| h.br_ssl_server_init_full_rsa(
+            &bearssl.server,
+            @ptrCast(&bearssl.x509),
+            1,
+            @ptrCast(rsa),
+        ),
+        .ec => |*ec| h.br_ssl_server_init_full_ec(
+            &bearssl.server,
+            @ptrCast(&bearssl.x509),
+            1,
+            @intCast(bearssl.cert_signer_algo),
+            @ptrCast(ec),
+        ),
+    }
+
+    h.br_ssl_engine_set_buffer(
+        &bearssl.server.eng,
+        io_buf.ptr,
+        io_buf.len,
+        1,
     );
-    errdefer secsock.deinit(gpa);
+    const reset_status = h.br_ssl_server_reset(&bearssl.server);
+    if (reset_status <= 0) return error.ServerResetFailed;
 
-    return secsock;
+    h.br_sslio_init(
+        &bearssl.sslio,
+        &bearssl.server.eng,
+        Callback.recv,
+        cb_ctx,
+        Callback.send,
+        cb_ctx,
+    );
+
+    return .{
+        .tls = .{ .bearssl = bearssl },
+    };
 }
+
+const Callback = struct {
+    socket: *const Socket,
+    runtime: ?*Runtime,
+
+    fn recv(c: ?*anyopaque, buf: [*c]u8, len: usize) callconv(.c) c_int {
+        const cb: *Callback = @ptrCast(@alignCast(c.?));
+        const count = cb.socket.recv(
+            cb.runtime.?,
+            buf[0..len],
+        ) catch |e| {
+            log.err("sslio recv cb failed: {t}", .{e});
+            return -1;
+        };
+        return @intCast(count);
+    }
+
+    fn send(c: ?*anyopaque, buf: [*c]const u8, len: usize) callconv(.c) c_int {
+        const cb: *Callback = @ptrCast(@alignCast(c.?));
+        const count = cb.socket.send(
+            cb.runtime.?,
+            buf[0..len],
+        ) catch |e| {
+            log.err("sslio send cb failed: {t}", .{e});
+            return -1;
+        };
+        return @intCast(count);
+    }
+};
 
 pub const EngineStatus = enum {
     Ok,
@@ -335,12 +536,23 @@ pub const PrivateKey = union(enum) {
     ec: h.br_ec_private_key,
 };
 
+pub const Init = struct {
+    cert_section_title: ?[]const u8,
+    cert: []const u8,
+    key_section_title: ?[]const u8,
+    key: []const u8,
+    socket: Socket.Config,
+};
+
+const log = std.log.scoped(.@"secsock/BearSSL");
+
 const std = @import("std");
 const mem = std.mem;
 
 pub const h = @import("bearssl.h");
 const tardy = @import("tardy");
 const Socket = tardy.net.Socket;
+const Runtime = tardy.Runtime;
 
-const server = @import("bearssl/server.zig");
-const Secsock = @import("Secsock.zig");
+const secsock = @import("secsock.zig");
+const Secsock = secsock.Secsock;
