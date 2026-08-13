@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
     tls_option.addOption(TlsImpl, "tls", tls);
 
     const secsock = b.addModule("secsock", .{
-        .root_source_file = b.path("src/Secsock.zig"),
+        .root_source_file = b.path("src/secsock.zig"),
         .target = target,
         .optimize = optimize,
     });

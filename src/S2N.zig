@@ -5,14 +5,18 @@ pub const S2N = @This();
 config: *h.s2n_config,
 cert: *h.s2n_cert_chain_and_key,
 
-pub fn init(cert: []const u8, key: []const u8) !S2N {
+pub const Init = struct {
+    cert: []const u8,
+    key: []const u8,
+};
+pub fn init(config: Init) !S2N {
     const init_rc = h.s2n_init();
     try handle_error("s2n_init", init_rc);
 
-    const config = h.s2n_config_new();
+    const conf = h.s2n_config_new();
 
-    var s2n: S2N = .{ .config = config.?, .cert = undefined };
-    try s2n.addCertChain(cert, key);
+    var s2n: S2N = .{ .config = conf.?, .cert = undefined };
+    try s2n.addCertChain(config.cert, config.key);
 
     return s2n;
 }
@@ -314,4 +318,4 @@ const tardy = @import("tardy");
 const Socket = tardy.net.Socket;
 const Runtime = tardy.Runtime;
 
-const Secsock = @import("Secsock.zig");
+const Secsock = @import("secsock.zig").Secsock;

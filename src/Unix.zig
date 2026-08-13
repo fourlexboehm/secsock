@@ -1,16 +1,11 @@
 const Unix = @This();
 
-pub const empty: Unix = .{};
+socket: *const Socket,
 
-pub fn deinit(_: Unix, io: Io, path: []const u8) void {
-    Io.Dir.deleteFileAbsolute(io, path) catch unreachable;
-}
-
-pub fn unix(
-    _: *const Unix,
+pub fn init(
     gpa: mem.Allocator,
-    path: [:0]const u8,
-) !Secsock {
+    path: []const u8,
+) !secsock.Secsock {
     debug.assert(mem.endsWith(u8, path, ".sock"));
 
     const socket = try gpa.create(Socket);
@@ -21,89 +16,63 @@ pub fn unix(
     try socket.bind();
     try socket.listen(4096);
 
-    return try unixWithSock(gpa, socket);
-}
-
-fn unixWithSock(
-    gpa: mem.Allocator,
-    socket: *const Socket,
-) !Secsock {
-    const impl = try gpa.create(Impl);
-    errdefer gpa.destroy(impl);
-
-    impl.* = .{ .socket = socket };
+    const unix = try gpa.create(Unix);
+    unix.* = .{ .socket = socket };
 
     return .{
-        .impl = impl,
-        .vtable = &vtable,
+        .tcp = .{ .unix = unix },
     };
 }
 
-const Impl = struct {
-    socket: *const Socket,
+pub fn free(unix: *const Unix, io: Io) void {
+    Io.Dir.deleteFileAbsolute(io, unix.path) catch unreachable;
+}
 
-    fn info(ct: *const anyopaque) Secsock.Info {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
+pub fn deinit(unix: *const Unix, gpa: mem.Allocator) void {
+    debug.assert(unix.socket.addr.family() == .unix);
 
-        var buf: [21:0]u8 = @splat(0x0);
-        _ = mem.print(&buf, "{f}", .{
-            impl.socket.addr,
-        }) catch unreachable;
+    unix.socket.close_blocking();
 
-        return .{
-            .name = .unix,
-            .address = buf,
-        };
-    }
+    gpa.destroy(unix.socket);
+    gpa.destroy(unix);
+}
 
-    fn deinit(ct: *const anyopaque, gpa: mem.Allocator) void {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
-        debug.assert(impl.socket.addr.family() == .unix);
+pub fn info(unix: *const Unix) secsock.Info {
+    var buf: [21:0]u8 = @splat(0x0);
+    _ = mem.print(&buf, "{f}", .{
+        unix.socket.addr,
+    }) catch unreachable;
 
-        impl.socket.close_blocking();
+    return .{
+        .name = .unix,
+        .address = buf,
+    };
+}
 
-        gpa.destroy(impl.socket);
-        gpa.destroy(impl);
-    }
+pub fn accept(unix: *const Unix, r: *Runtime) !secsock.Secsock {
+    const client = try r.gpa.create(Socket);
+    client.* = try unix.socket.accept(r);
+    errdefer r.gpa.destroy(client);
+    errdefer client.close_blocking();
 
-    fn accept(ct: *const anyopaque, r: *Runtime) !Secsock {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
+    const new = try r.gpa.create(Unix);
+    errdefer r.gpa.destroy(new);
+    new.* = .{ .socket = client };
 
-        const client = try r.gpa.create(Socket);
-        client.* = try impl.socket.accept(r);
-        errdefer r.gpa.destroy(client);
-        errdefer client.close_blocking();
+    return .{ .tcp = .{ .unix = new } };
+}
 
-        const new_unix = try unixWithSock(r.gpa, client);
-        errdefer new_unix.deinit(r.gpa);
+pub fn connect(unix: *const Unix, r: *Runtime) !void {
+    try unix.socket.connect(r);
+}
 
-        return new_unix;
-    }
+pub fn recv(unix: *const Unix, r: *Runtime, buf: []u8) !usize {
+    return try unix.socket.recv(r, buf);
+}
 
-    fn connect(ct: *const anyopaque, r: *Runtime) !void {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
-        try impl.socket.connect(r);
-    }
-
-    fn recv(ct: *const anyopaque, r: *Runtime, buf: []u8) !usize {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
-        return try impl.socket.recv(r, buf);
-    }
-
-    fn send(ct: *const anyopaque, r: *Runtime, buf: []const u8) !usize {
-        const impl: *const Impl = @ptrCast(@alignCast(ct));
-        return try impl.socket.send(r, buf);
-    }
-};
-
-const vtable: Secsock.VTable = .{
-    .info = Impl.info,
-    .deinit = Impl.deinit,
-    .accept = Impl.accept,
-    .connect = Impl.connect,
-    .recv = Impl.recv,
-    .send = Impl.send,
-};
+pub fn send(unix: *const Unix, r: *Runtime, buf: []const u8) !usize {
+    return try unix.socket.send(r, buf);
+}
 
 const std = @import("std");
 const Io = std.Io;
@@ -115,4 +84,4 @@ const tardy = @import("tardy");
 const Socket = tardy.net.Socket;
 const Runtime = tardy.Runtime;
 
-const Secsock = @import("Secsock.zig");
+const secsock = @import("secsock.zig");
