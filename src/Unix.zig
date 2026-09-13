@@ -56,8 +56,8 @@ const Impl = struct {
         };
     }
 
-    fn deinit(ct: *anyopaque, gpa: mem.Allocator) void {
-        const impl: *Impl = @ptrCast(@alignCast(ct));
+    fn deinit(ct: *const anyopaque, gpa: mem.Allocator) void {
+        const impl: *Impl = @ptrCast(@alignCast(@constCast(ct)));
         debug.assert(impl.socket.socket.addr.family() == .unix);
 
         impl.socket.deinit(gpa);
@@ -83,8 +83,8 @@ const Impl = struct {
         return try impl.socket.cancelAccepts(r);
     }
 
-    fn stopAccepting(ct: *anyopaque) void {
-        const impl: *Impl = @ptrCast(@alignCast(ct));
+    fn stopAccepting(ct: *const anyopaque) void {
+        const impl: *Impl = @ptrCast(@alignCast(@constCast(ct)));
         impl.socket.stopAccepting();
     }
 

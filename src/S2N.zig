@@ -157,13 +157,14 @@ const Impl = struct {
         };
     }
 
-    fn deinit(i: *anyopaque, gpa: mem.Allocator) void {
-        const impl: *Impl = @ptrCast(@alignCast(i));
+    fn deinit(i: *const anyopaque, gpa: mem.Allocator) void {
+        const impl: *Impl = @ptrCast(@alignCast(@constCast(i)));
 
         var blocked_status: h.s2n_blocked_status = undefined;
         _ = h.s2n_shutdown(impl.conn, &blocked_status);
         _ = h.s2n_connection_free(impl.conn);
 
+        impl.handshakes.deinit();
         impl.cb.socket.deinit(gpa);
         gpa.destroy(impl.cb);
         gpa.destroy(impl);
@@ -196,7 +197,10 @@ const Impl = struct {
             .socket = &new_impl.cb.socket,
         };
         const registry = @constCast(&impl.handshakes);
-        registry.add(&handshake);
+        if (!registry.add(&handshake)) {
+            try shutdownManaged(&new_impl.cb.socket, r);
+            return error.Canceled;
+        }
         defer registry.remove(&handshake);
 
         var blocked_status: h.s2n_blocked_status = h.S2N_NOT_BLOCKED;
@@ -216,13 +220,12 @@ const Impl = struct {
 
     fn cancelAccepts(i: *const anyopaque, r: *Runtime) !usize {
         const impl: *const Impl = @ptrCast(@alignCast(i));
-        const canceled = try impl.cb.socket.cancelAccepts(r);
-        try @constCast(&impl.handshakes).shutdown(r);
-        return canceled;
+        try @constCast(&impl.handshakes).startDrain(r);
+        return try impl.cb.socket.cancelAccepts(r);
     }
 
-    fn stopAccepting(i: *anyopaque) void {
-        const impl: *Impl = @ptrCast(@alignCast(i));
+    fn stopAccepting(i: *const anyopaque) void {
+        const impl: *Impl = @ptrCast(@alignCast(@constCast(i)));
         impl.cb.socket.stopAccepting();
     }
 
@@ -284,14 +287,27 @@ const Impl = struct {
 const HandshakeRegistry = struct {
     mutex: std.Thread.Mutex = .{},
     head: ?*Handshake = null,
+    draining: ?[]bool = null,
+    draining_allocator: ?mem.Allocator = null,
 
-    fn add(registry: *HandshakeRegistry, handshake: *Handshake) void {
+    fn deinit(registry: *HandshakeRegistry) void {
+        if (registry.draining) |draining|
+            registry.draining_allocator.?.free(draining);
+    }
+
+    fn add(registry: *HandshakeRegistry, handshake: *Handshake) bool {
         registry.mutex.lock();
         defer registry.mutex.unlock();
+
+        if (registry.draining) |draining| {
+            debug.assert(draining.len == handshake.runtime.count);
+            if (draining[handshake.runtime.id]) return false;
+        }
 
         handshake.next = registry.head;
         if (registry.head) |head| head.previous = handshake;
         registry.head = handshake;
+        return true;
     }
 
     fn remove(registry: *HandshakeRegistry, handshake: *Handshake) void {
@@ -305,23 +321,38 @@ const HandshakeRegistry = struct {
         if (handshake.next) |next| next.previous = handshake.previous;
     }
 
-    fn shutdown(registry: *HandshakeRegistry, rt: *Runtime) !void {
+    fn startDrain(registry: *HandshakeRegistry, rt: *Runtime) !void {
         registry.mutex.lock();
         defer registry.mutex.unlock();
+
+        if (registry.draining == null) {
+            registry.draining = try rt.gpa.alloc(bool, rt.count);
+            registry.draining_allocator = rt.gpa;
+            @memset(registry.draining.?, false);
+        }
+        debug.assert(registry.draining.?.len == rt.count);
+        registry.draining.?[rt.id] = true;
 
         var handshake = registry.head;
         while (handshake) |current| : (handshake = current.next) {
             if (current.runtime != rt) continue;
-            current.socket.shutdown(rt) catch |err| switch (err) {
-                error.ConnectionAborted,
-                error.ConnectionResetByPeer,
-                error.SocketUnconnected,
-                => {},
-                else => return err,
-            };
+            try shutdownManaged(current.socket, rt);
         }
     }
 };
+
+fn shutdownManaged(
+    socket: *const Secsock.ManagedSocket,
+    rt: *Runtime,
+) !void {
+    socket.shutdown(rt) catch |err| switch (err) {
+        error.ConnectionAborted,
+        error.ConnectionResetByPeer,
+        error.SocketUnconnected,
+        => {},
+        else => return err,
+    };
+}
 
 const Handshake = struct {
     runtime: *Runtime,
@@ -390,6 +421,7 @@ const log = std.log.scoped(.s2n);
 
 const std = @import("std");
 const mem = std.mem;
+const debug = std.debug;
 
 const h = @import("s2n.h");
 const tardy = @import("tardy");

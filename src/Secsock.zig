@@ -17,15 +17,21 @@ pub fn accept(tls: *const Secsock, rt: *Runtime) !Secsock {
 }
 
 pub fn cancelAccepts(tls: *const Secsock, rt: *Runtime) !usize {
-    return try tls.vtable.cancel_accepts(tls.impl, rt);
+    const cancel = tls.vtable.cancel_accepts orelse
+        return error.OperationNotSupported;
+    return try cancel(tls.impl, rt);
 }
 
-pub fn stopAccepting(tls: *const Secsock) void {
-    tls.vtable.stop_accepting(tls.impl);
+pub fn stopAccepting(tls: *const Secsock) !void {
+    const stop = tls.vtable.stop_accepting orelse
+        return error.OperationNotSupported;
+    stop(tls.impl);
 }
 
 pub fn shutdown(tls: *const Secsock, rt: *Runtime) !void {
-    try tls.vtable.shutdown(tls.impl, rt);
+    const stop = tls.vtable.shutdown orelse
+        return error.OperationNotSupported;
+    try stop(tls.impl, rt);
 }
 
 pub fn connect(tls: *const Secsock, rt: *Runtime) !void {
@@ -66,14 +72,14 @@ const Implementation = enum(u8) {
 
 pub const VTable = struct {
     info: *const fn (impl: *const anyopaque) Info,
-    deinit: *const fn (impl: *anyopaque, mem.Allocator) void,
+    deinit: *const fn (impl: *const anyopaque, mem.Allocator) void,
     accept: *const fn (impl: *const anyopaque, *Runtime) anyerror!Secsock,
-    cancel_accepts: *const fn (impl: *const anyopaque, *Runtime) anyerror!usize,
-    stop_accepting: *const fn (impl: *anyopaque) void,
-    shutdown: *const fn (impl: *const anyopaque, *Runtime) anyerror!void,
     connect: *const fn (impl: *const anyopaque, *Runtime) anyerror!void,
     recv: *const fn (impl: *anyopaque, *Runtime, []u8) anyerror!usize,
     send: *const fn (impl: *anyopaque, *Runtime, []const u8) anyerror!usize,
+    cancel_accepts: ?*const fn (impl: *const anyopaque, *Runtime) anyerror!usize = null,
+    stop_accepting: ?*const fn (impl: *const anyopaque) void = null,
+    shutdown: ?*const fn (impl: *const anyopaque, *Runtime) anyerror!void = null,
 };
 
 pub const ManagedSocket = struct {
