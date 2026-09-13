@@ -14,8 +14,8 @@
             .lazy = true,
         },
         .s2n_tls = .{
-            .url = "git+https://github.com/tardy-org/s2n-tls-zig?ref=main#f0b319d8cbc011fe020e4f31e1097c1c1144e045",
-            .hash = "s2n_tls-1.7.3-n2nk3GFtAgDUw4loKYhUOkjS8CeyD_SLVrvjce3h5Kgc",
+            .url = "git+https://github.com/fourlexboehm/s2n-tls-zig#2125698c60404bc804217a983854c2536ff1b9f7",
+            .hash = "s2n_tls-1.7.3-n2nk3B9tAgAfZwjKT4jV6aWlD7f66sDKExSVdB5KlrTO",
             .lazy = true,
         },
     },
