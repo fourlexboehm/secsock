@@ -88,6 +88,11 @@ const Impl = struct {
         impl.socket.stopAccepting();
     }
 
+    fn shutdown(ct: *const anyopaque, r: *Runtime) !void {
+        const impl: *const Impl = @ptrCast(@alignCast(ct));
+        try impl.socket.shutdown(r);
+    }
+
     fn connect(ct: *const anyopaque, r: *Runtime) !void {
         const impl: *const Impl = @ptrCast(@alignCast(ct));
         try impl.socket.socket.connect(r);
@@ -110,6 +115,7 @@ const vtable: Secsock.VTable = .{
     .accept = Impl.accept,
     .cancel_accepts = Impl.cancelAccepts,
     .stop_accepting = Impl.stopAccepting,
+    .shutdown = Impl.shutdown,
     .connect = Impl.connect,
     .recv = Impl.recv,
     .send = Impl.send,

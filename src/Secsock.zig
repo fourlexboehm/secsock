@@ -24,6 +24,10 @@ pub fn stopAccepting(tls: *const Secsock) void {
     tls.vtable.stop_accepting(tls.impl);
 }
 
+pub fn shutdown(tls: *const Secsock, rt: *Runtime) !void {
+    try tls.vtable.shutdown(tls.impl, rt);
+}
+
 pub fn connect(tls: *const Secsock, rt: *Runtime) !void {
     try tls.vtable.connect(tls.impl, rt);
 }
@@ -66,6 +70,7 @@ pub const VTable = struct {
     accept: *const fn (impl: *const anyopaque, *Runtime) anyerror!Secsock,
     cancel_accepts: *const fn (impl: *const anyopaque, *Runtime) anyerror!usize,
     stop_accepting: *const fn (impl: *anyopaque) void,
+    shutdown: *const fn (impl: *const anyopaque, *Runtime) anyerror!void,
     connect: *const fn (impl: *const anyopaque, *Runtime) anyerror!void,
     recv: *const fn (impl: *anyopaque, *Runtime, []u8) anyerror!usize,
     send: *const fn (impl: *anyopaque, *Runtime, []const u8) anyerror!usize,
@@ -113,6 +118,10 @@ pub const ManagedSocket = struct {
             closed => return,
             else => unreachable,
         };
+    }
+
+    pub fn shutdown(managed: *const ManagedSocket, rt: *Runtime) !void {
+        try managed.socket.shutdown(rt);
     }
 };
 
