@@ -9,7 +9,7 @@ pub fn to_secure_socket_server(
     const cb_ctx = try gpa.create(Callback);
     errdefer gpa.destroy(cb_ctx);
 
-    cb_ctx.* = .{ .runtime = null, .socket = socket };
+    cb_ctx.* = .{ .runtime = null, .socket = .init(socket) };
 
     const impl = try gpa.create(Impl);
     errdefer gpa.destroy(impl);
@@ -74,7 +74,7 @@ const Impl = struct {
 
         var buf: [21:0]u8 = @splat(0x0);
         _ = mem.print(&buf, "{f}", .{
-            impl.cb.socket.addr,
+            impl.cb.socket.socket.addr,
         }) catch unreachable;
 
         return .{
@@ -83,11 +83,10 @@ const Impl = struct {
         };
     }
 
-    fn deinit(i: *const anyopaque, gpa: mem.Allocator) void {
-        const impl: *const Impl = @ptrCast(@alignCast(i));
+    fn deinit(i: *anyopaque, gpa: mem.Allocator) void {
+        const impl: *Impl = @ptrCast(@alignCast(i));
 
-        impl.cb.socket.close_blocking();
-        gpa.destroy(impl.cb.socket);
+        impl.cb.socket.deinit(gpa);
 
         gpa.destroy(impl.cb);
         gpa.free(impl.io_buf);
@@ -99,8 +98,8 @@ const Impl = struct {
         const cb = impl.cb;
 
         const client = r.gpa.create(Socket) catch @panic("OOM");
-        client.* = try cb.socket.accept(r);
         errdefer r.gpa.destroy(client);
+        client.* = try cb.socket.socket.accept(r);
         errdefer client.close_blocking();
 
         const new_bearssl = try impl.bearssl.tlsWithSock(
@@ -115,6 +114,16 @@ const Impl = struct {
         new_impl.cb.runtime = r;
 
         return new_bearssl;
+    }
+
+    fn cancelAccepts(i: *const anyopaque, r: *Runtime) !usize {
+        const impl: *const Impl = @ptrCast(@alignCast(i));
+        return try impl.cb.socket.cancelAccepts(r);
+    }
+
+    fn stopAccepting(i: *anyopaque) void {
+        const impl: *Impl = @ptrCast(@alignCast(i));
+        impl.cb.socket.stopAccepting();
     }
 
     fn connect(_: *const anyopaque, _: *Runtime) !void {
@@ -189,12 +198,12 @@ const Impl = struct {
 };
 
 const Callback = struct {
-    socket: *const Socket,
+    socket: Secsock.ManagedSocket,
     runtime: ?*Runtime,
 
     fn recv(c: ?*anyopaque, buf: [*c]u8, len: usize) callconv(.c) c_int {
         const cb: *Callback = @ptrCast(@alignCast(c.?));
-        const count = cb.socket.recv(
+        const count = cb.socket.socket.recv(
             cb.runtime.?,
             buf[0..len],
         ) catch |e| {
@@ -206,7 +215,7 @@ const Callback = struct {
 
     fn send(c: ?*anyopaque, buf: [*c]const u8, len: usize) callconv(.c) c_int {
         const cb: *Callback = @ptrCast(@alignCast(c.?));
-        const count = cb.socket.send(
+        const count = cb.socket.socket.send(
             cb.runtime.?,
             buf[0..len],
         ) catch |e| {
@@ -221,6 +230,8 @@ const vtable: Secsock.VTable = .{
     .info = Impl.info,
     .deinit = Impl.deinit,
     .accept = Impl.accept,
+    .cancel_accepts = Impl.cancelAccepts,
+    .stop_accepting = Impl.stopAccepting,
     .connect = Impl.connect,
     .recv = Impl.recv,
     .send = Impl.send,
