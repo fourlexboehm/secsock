@@ -141,6 +141,7 @@ const Impl = struct {
     s2n: *S2N,
     conn: *h.s2n_connection,
     cb: *Callback,
+    handshakes: HandshakeRegistry = .{},
 
     fn info(i: *const anyopaque) Secsock.Info {
         const impl: *const Impl = @ptrCast(@alignCast(i));
@@ -190,6 +191,14 @@ const Impl = struct {
         const new_impl: *Impl = @ptrCast(@alignCast(new_s2n.impl));
         new_impl.cb.runtime = r;
 
+        var handshake: Handshake = .{
+            .runtime = r,
+            .socket = &new_impl.cb.socket,
+        };
+        const registry = @constCast(&impl.handshakes);
+        registry.add(&handshake);
+        defer registry.remove(&handshake);
+
         var blocked_status: h.s2n_blocked_status = h.S2N_NOT_BLOCKED;
         while (h.s2n_negotiate(new_impl.conn, &blocked_status) != h.S2N_SUCCESS) {
             switch (h.s2n_error_get_type(h.s2n_errno)) {
@@ -207,7 +216,9 @@ const Impl = struct {
 
     fn cancelAccepts(i: *const anyopaque, r: *Runtime) !usize {
         const impl: *const Impl = @ptrCast(@alignCast(i));
-        return try impl.cb.socket.cancelAccepts(r);
+        const canceled = try impl.cb.socket.cancelAccepts(r);
+        try @constCast(&impl.handshakes).shutdown(r);
+        return canceled;
     }
 
     fn stopAccepting(i: *anyopaque) void {
@@ -245,6 +256,7 @@ const Impl = struct {
 
         const res = h.s2n_recv(impl.conn, buf.ptr, @intCast(buf.len), &blocked_status);
 
+        if (res == 0) return error.Closed;
         if (res < 0) switch (h.s2n_error_get_type(h.s2n_errno)) {
             h.S2N_ERR_T_CLOSED => return error.Closed,
             else => return error.FailedRecv,
@@ -267,6 +279,55 @@ const Impl = struct {
 
         return @intCast(res);
     }
+};
+
+const HandshakeRegistry = struct {
+    mutex: std.Thread.Mutex = .{},
+    head: ?*Handshake = null,
+
+    fn add(registry: *HandshakeRegistry, handshake: *Handshake) void {
+        registry.mutex.lock();
+        defer registry.mutex.unlock();
+
+        handshake.next = registry.head;
+        if (registry.head) |head| head.previous = handshake;
+        registry.head = handshake;
+    }
+
+    fn remove(registry: *HandshakeRegistry, handshake: *Handshake) void {
+        registry.mutex.lock();
+        defer registry.mutex.unlock();
+
+        if (handshake.previous) |previous|
+            previous.next = handshake.next
+        else
+            registry.head = handshake.next;
+        if (handshake.next) |next| next.previous = handshake.previous;
+    }
+
+    fn shutdown(registry: *HandshakeRegistry, rt: *Runtime) !void {
+        registry.mutex.lock();
+        defer registry.mutex.unlock();
+
+        var handshake = registry.head;
+        while (handshake) |current| : (handshake = current.next) {
+            if (current.runtime != rt) continue;
+            current.socket.shutdown(rt) catch |err| switch (err) {
+                error.ConnectionAborted,
+                error.ConnectionResetByPeer,
+                error.SocketUnconnected,
+                => {},
+                else => return err,
+            };
+        }
+    }
+};
+
+const Handshake = struct {
+    runtime: *Runtime,
+    socket: *const Secsock.ManagedSocket,
+    previous: ?*Handshake = null,
+    next: ?*Handshake = null,
 };
 
 const Callback = struct {
